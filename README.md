@@ -195,6 +195,55 @@ sudo vps-monitorctl uninstall
 
 卸载默认保留配置和证据，避免误删；确认后自行删除。
 
+## 常见问答（FAQ）
+
+### 为什么程序、配置和数据不全部放在一个目录？
+
+项目实际只有 3 个正式位置，分别遵循 Linux FHS（Filesystem Hierarchy Standard）的职责划分：
+
+```text
+/opt/vps-monitor/       可替换、只读的程序文件
+/etc/vps-monitor.env    root 专属的私密配置（0600）
+/var/lib/vps-monitor/   报告和指标等可变持久数据
+```
+
+安装时出现的 `$HOME/vps-monitor/` 只是固定的下载、解压工作目录，并非运行数据目录；安装完成后可以删除：
+
+```bash
+rm -rf "$HOME/vps-monitor" "$HOME/vps-monitor.zip" "$HOME/SHA256SUMS"
+```
+
+这样分离不是为了增加复杂度，而是为了安全和可靠升级：
+
+1. **升级不丢配置和证据**：`/opt/vps-monitor` 可以整套替换，Telegram Token、阈值、权限授权和历史报告仍然保留。
+2. **保护 Telegram Token**：配置位于 `/etc`，权限为 `root:root 0600`，不会被打进 Release、Docker 镜像或 Git 仓库。
+3. **防止程序修改自身**：systemd 使用 `ProtectSystem=strict` 将程序和系统目录设为只读，仅通过 `ReadWritePaths=/var/lib/vps-monitor` 允许写专用数据目录。
+4. **避免一次误删全部内容**：即使重装或删除程序目录，配置与故障证据仍在。
+5. **便于分别备份和轮转**：程序可从 Release 恢复；配置应加密备份；报告和指标按保留策略自动清理。
+6. **符合 Linux 运维惯例**：Nginx、Docker、Prometheus 等服务同样将程序、配置和可变数据分开管理。
+
+如果把所有内容放进 `/opt/vps-monitor`，该目录必须同时容纳只读代码、root 私密 Token 和可写报告。一旦为了写报告而开放整个目录，运行中的程序也可能修改自己的代码或配置；执行 `rm -rf /opt/vps-monitor`、错误升级或 `chmod -R` 时，还可能同时删除或泄露所有内容。因此，单目录看起来简单，但安全边界、升级容错和备份策略都会更差。
+
+用户日常不需要记住这些路径，统一使用管理命令即可：
+
+```bash
+sudo vps-monitorctl status
+sudo vps-monitorctl config
+sudo vps-monitorctl test
+sudo vps-monitorctl logs
+sudo vps-monitorctl reports
+sudo vps-monitorctl restart
+sudo vps-monitorctl uninstall
+```
+
+### 安装目录为什么不带版本号？
+
+版本号只属于 GitHub Tag、Release 和程序自身。下载工作目录始终是 `$HOME/vps-monitor`，正式程序目录始终是 `/opt/vps-monitor`。升级到任何版本都复用相同路径，并保留 `/etc/vps-monitor.env` 与 `/var/lib/vps-monitor`。
+
+### 可以把目录改到其他位置吗？
+
+数据目录可通过 `MONITOR_DATA_DIR` 修改，但同时必须调整 systemd 的 `ReadWritePaths`，否则安全沙箱会阻止写入。私密配置和程序路径不建议随意更改；如确有统一目录、容器卷或特殊备份需求，应同步设计文件权限、只读边界、升级和卸载策略，而不是简单移动文件。
+
 ## 2GB 内存 + 1GB Swap 建议
 
 默认设置通常 RSS 约 15–30MiB（进程数量和故障报告会影响），不是预留或持续占用 96MiB。96MiB 是 cgroup 硬上限；64MiB 开始施压，Swap 最多 32MiB，CPU 最多单核 20%。I/O 调度为 idle、nice=10。程序内部超过 80MiB 会主动退出，且报告、命令输出、fd 和历史都有上限。
