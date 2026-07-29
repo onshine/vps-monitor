@@ -9,8 +9,13 @@ MODE=basic;CONSENT=NO
 say "$B" 'VPS Monitor 安装器'
 say "$B" '常驻预算：1 个 Python 进程 / 1 个线程 / 日常采样不启动子进程'
 say "$B" '硬限制：96MiB 内存 / 20% 单核 CPU / 32MiB Swap'
+UPGRADE=0;CONFIG_HASH=
 if [ -f /etc/vps-monitor.env ]; then
- say "$B" '检测到旧版本：保留配置、授权和历史数据，仅更新程序与服务。'
+ UPGRADE=1;CONFIG_HASH=$(sha256sum /etc/vps-monitor.env | awk '{print $1}')
+ BACKUP="/etc/vps-monitor.env.backup.$(date +%Y%m%d-%H%M%S)"
+ cp -p /etc/vps-monitor.env "$BACKUP"
+ say "$B" '检测到旧版本：配置和数据不会覆盖。'
+ say "$B" "配置已备份：$BACKUP"
 else
  printf '\n';say "$B" '[1] BASIC：整机 CPU、内存、Swap、磁盘 I/O/空间（低危，默认）'
  say "$Y" '[2] FULL：增加其他进程 PID、命令、路径、fd、端口和日志取证（中/高危）'
@@ -45,6 +50,15 @@ install -m 0755 "$ROOT/vps-monitorctl" /usr/local/bin/vps-monitorctl
 if [ ! -f /etc/vps-monitor.env ]; then
  install -m 0600 "$ROOT/vps-monitor.env.example" /etc/vps-monitor.env
  sed -i "s/^FORENSICS_MODE=.*/FORENSICS_MODE=$MODE/;s/^FORENSICS_CONSENT=.*/FORENSICS_CONSENT=$CONSENT/" /etc/vps-monitor.env
+fi
+if [ "$UPGRADE" = 1 ]; then
+ NEW_HASH=$(sha256sum /etc/vps-monitor.env | awk '{print $1}')
+ if [ "$NEW_HASH" != "$CONFIG_HASH" ]; then
+  cp -p "$BACKUP" /etc/vps-monitor.env
+  say "$R" '安全检查失败：升级期间配置发生变化，已自动恢复备份并中止。'
+  exit 1
+ fi
+ say "$G" '配置哈希核验通过：TG 参数和阈值保持原样。'
 fi
 chown -R root:root /opt/vps-monitor /var/lib/vps-monitor /etc/vps-monitor.env;chmod 0600 /etc/vps-monitor.env
 systemctl daemon-reload;systemctl enable vps-monitor.service

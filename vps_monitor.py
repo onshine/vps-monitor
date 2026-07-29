@@ -5,7 +5,7 @@ from collections import deque
 from datetime import datetime
 from pathlib import Path
 
-VERSION="2.1.0"
+VERSION="2.1.1"
 def env(name,default,cast=str):
  try:return cast(os.getenv(name,str(default)))
  except:return default
@@ -18,6 +18,7 @@ TOPN=min(50,max(5,env("TOP_PROCESSES",15,int))); MAX_FDS=min(500,max(20,env("MAX
 REPORT_DAYS=max(1,env("REPORT_RETENTION_DAYS",14,int)); REPORT_MAX=max(5,env("REPORT_MAX_FILES",100,int)); METRICS_INTERVAL=max(0,env("METRICS_INTERVAL",60,int)); METRICS_DAYS=max(1,env("METRICS_RETENTION_DAYS",7,int))
 DATA=Path(os.getenv("MONITOR_DATA_DIR","/var/lib/vps-monitor")); REPORTS=DATA/"reports"; METRICS=DATA/"metrics"; HOST=os.getenv("MONITOR_HOSTNAME",socket.gethostname())
 TOKEN=os.getenv("TG_BOT_TOKEN",""); CHAT=os.getenv("TG_CHAT_ID",""); THREAD=os.getenv("TG_MESSAGE_THREAD_ID",""); SILENT=os.getenv("TG_DISABLE_NOTIFICATION","false").lower() in ("1","true","yes")
+AUTO_ACTION=os.getenv("AUTO_ACTION","none").lower(); AUTO_CONSENT=os.getenv("AUTO_ACTION_CONSENT","NO") == "YES"
 PAGE=os.sysconf("SC_PAGE_SIZE"); CLK=os.sysconf(os.sysconf_names["SC_CLK_TCK"]); SELF=os.getpid()
 MODE=os.getenv("FORENSICS_MODE","basic").lower(); CONSENT=os.getenv("FORENSICS_CONSENT","") == "YES"; FULL=MODE == "full" and CONSENT
 SELF_RSS_MAX=max(32,env("SELF_RSS_MAX_MB",80,int))*1048576; MAX_REPORT=max(1,env("MAX_REPORT_SIZE_MB",5,int))*1048576; SAMPLE_TIMEOUT=max(5,env("SELF_SAMPLE_TIMEOUT",30,float))
@@ -232,6 +233,8 @@ def config_check():
  if MODE not in ("basic","full"):errors.append("FORENSICS_MODE 只能是 basic 或 full")
  if MODE=="full" and not CONSENT:errors.append("完整取证模式未获授权：必须由用户审阅 SECURITY.md 后明确设置 FORENSICS_CONSENT=YES")
  if os.geteuid()!=0 and FULL:errors.append("完整取证模式需要 root；否则无法可靠读取其他用户进程")
+ if AUTO_ACTION != "none":errors.append("当前版本禁止自动处置：AUTO_ACTION 必须为 none；监控器不会 STOP/KILL/重启业务进程")
+ if AUTO_CONSENT:errors.append("当前版本未提供自动处置授权流程：AUTO_ACTION_CONSENT 必须为 NO")
  print(f"VPS Sentinel {VERSION}\nHost: {HOST}\nData: {DATA}\nMode: {MODE}; explicit consent: {'yes' if CONSENT else 'no'}\nSelf budget: RSS={human(SELF_RSS_MAX)} report={human(MAX_REPORT)} sample_timeout={SAMPLE_TIMEOUT}s\nInterval: {INTERVAL}s; process scan: {PROC_INTERVAL}s\nThresholds: CPU={CPU_LIMIT}% MEM={MEM_LIMIT}% SWAP={SWAP_LIMIT}% IO={IO_LIMIT}% FS={FS_LIMIT}%\nTelegram: {'configured' if TOKEN and CHAT else 'not configured'}")
  if errors:
   print("ERROR: "+"; ".join(errors),file=sys.stderr);return 1

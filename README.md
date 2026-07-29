@@ -145,6 +145,13 @@ docker compose -f compose.yml -f compose.full.yml up -d
 4. 填写本机 `/etc/vps-monitor.env`（权限 `0600`），不要把 Token 提交到 Git。
 5. 执行 `sudo vps-monitorctl test`。
 
+Telegram 配置中的两个可选变量：
+
+- `TG_MESSAGE_THREAD_ID=`：仅用于开启了“话题/Topics”的 Telegram 群，填写目标话题 ID；私聊、普通群或不指定话题时留空。
+- `TG_DISABLE_NOTIFICATION=false`：`false` 为正常声音/振动通知（告警推荐）；`true` 为静默发送。
+
+配置模板中的每个变量均有中文注释。
+
 ## 配置变量
 
 | 变量 | 默认 | 说明 |
@@ -177,23 +184,156 @@ sudo vps-monitorctl set ALERT_COOLDOWN 1800
 
 也可运行 `sudo vps-monitorctl config`。旧配置自动备份为 `/etc/vps-monitor.env.bak`。
 
-## 数据与维护
+## 常用操作（每条单独复制）
 
-- 配置：`/etc/vps-monitor.env`（0600）
-- 程序：`/opt/vps-monitor/`
-- 报告：`/var/lib/vps-monitor/reports/`
-- 指标：`/var/lib/vps-monitor/metrics/YYYY-MM-DD.jsonl`
-- 服务日志：`journalctl -u vps-monitor`
+### 查看当前版本
+
+```bash
+sudo vps-monitorctl version
+```
+
+### 编辑配置
+
+```bash
+sudo vps-monitorctl config
+```
+
+保存后会先检查配置；有效才重启。无效会自动恢复 `/etc/vps-monitor.env.bak`，不会带着错误配置启动。
+
+### 测试 Telegram 通知
+
+```bash
+sudo vps-monitorctl test
+```
+
+显示 `success` 表示 Bot Token、Chat ID 和网络均正常。
+
+### 查看完整服务状态和实际资源占用
+
+```bash
+sudo vps-monitorctl status
+```
+
+重点看 `Active`、`Tasks` 和 `Memory`。`Tasks: 1 (limit: 8)` 表示当前只有 1 个任务，8 是硬上限，不是创建了 8 个任务。
+
+### 实时查看日志
 
 ```bash
 sudo vps-monitorctl logs
-sudo vps-monitorctl reports
+```
+
+按 `Ctrl+C` 退出日志查看，不会停止监控服务。
+
+### 检查配置但不重启
+
+```bash
 sudo vps-monitorctl check
+```
+
+### 修改一个变量
+
+```bash
+sudo vps-monitorctl set CPU_THRESHOLD 85
+```
+
+该命令会备份、检查并重启；失败自动回滚。
+
+### 重启服务并显示完整状态
+
+```bash
 sudo vps-monitorctl restart
+```
+
+### 查看异常报告
+
+```bash
+sudo vps-monitorctl reports
+```
+
+### 停止监控
+
+```bash
+sudo systemctl stop vps-monitor
+```
+
+### 启动监控
+
+```bash
+sudo systemctl start vps-monitor
+```
+
+### 禁止开机启动并立即停止
+
+```bash
+sudo systemctl disable --now vps-monitor
+```
+
+### 恢复开机启动并立即运行
+
+```bash
+sudo systemctl enable --now vps-monitor
+```
+
+### 卸载程序
+
+```bash
 sudo vps-monitorctl uninstall
 ```
 
-卸载默认保留配置和证据，避免误删；确认后自行删除。
+卸载默认保留配置和证据，避免误删；确认不需要后再由管理员手动删除。
+
+## 升级是否覆盖 Telegram 配置？
+
+**不会。** `/etc/vps-monitor.env` 只在首次安装、文件不存在时创建。升级检测到该文件后：
+
+1. 先按时间生成 `/etc/vps-monitor.env.backup.YYYYMMDD-HHMMSS`；
+2. 记录升级前 SHA-256；
+3. 只替换程序、管理命令和 systemd 服务；
+4. 再核对配置 SHA-256；
+5. 如果配置意外变化，立即恢复备份并中止升级；
+6. `/var/lib/vps-monitor` 的报告和指标也不会覆盖。
+
+因此已填写的 `TG_BOT_TOKEN`、`TG_CHAT_ID`、阈值和权限授权都会原样保留。
+
+## 异常时能否自动阻止肇事程序？
+
+### 当前版本能做什么
+
+- 持续判断 CPU、内存、Swap、磁盘 I/O、空间和 inode 异常；
+- FULL 模式下记录高负载进程 PID、命令、路径、fd、端口和相关日志；
+- 保存完整本地报告并发送 Telegram；
+- 冷却重复告警，并在恢复后通知；
+- 用自身 CPU、内存、Swap、tasks、输出和超时上限保护服务器。
+
+### 当前版本明确不能、也不会做什么
+
+> 🔴 **高危操作默认禁止：监控器不会自动 `SIGSTOP`、`SIGTERM`、`SIGKILL`、renice、限速、重启服务、重启容器、删除文件或关机。**
+
+原因是高 I/O PID 可能是数据库、文件系统回写、备份、容器运行时或关键系统服务。采样归因也可能遇到 PID 复用或多个进程共同制造 I/O。未经授权自动暂停或杀死进程，可能造成数据库损坏、服务中断或数据丢失，风险高于单次告警。
+
+配置强制保持：
+
+```ini
+AUTO_ACTION=none
+AUTO_ACTION_CONSENT=NO
+```
+
+当前版本若发现 `AUTO_ACTION` 不是 `none`，会拒绝启动；这确保用户不能因为误填变量就开启尚未提供安全授权流程的处置能力。
+
+### 将来若提供自动干预，必须满足什么条件
+
+任何自动干预都必须独立于 FULL 取证授权，再进行第二次高危授权，并至少满足：
+
+1. 用户明确选择动作，例如临时 `SIGSTOP`，不能笼统授权“自动处理”；
+2. 手输红色大写 `YES`，并可随时撤回；
+3. 只允许用户配置的程序、systemd unit 或 cgroup 白名单，禁止按一次采样结果随意处理任何 PID；
+4. 内核线程、PID 1、SSH、systemd、数据库等默认保护名单永不处理；
+5. 连续多次确认同一进程，并核对 PID 启动时间，防止 PID 复用；
+6. 优先可逆的暂停/限速，并设自动恢复超时；`KILL` 默认禁止；
+7. 每次动作前后落盘审计并发送 Telegram；
+8. 设置全局次数上限和熔断，监控自身异常时禁止执行动作。
+
+在这些机制完成并经过单独审查以前，本项目坚持“只监控、取证、通知，不自动处置”。用户未授权的操作就是禁止事项，脚本不能自行决定。
 
 ## 常见问答（FAQ）
 
