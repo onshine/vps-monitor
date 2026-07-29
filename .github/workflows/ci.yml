@@ -14,5 +14,7 @@ jobs:
           python-version: '3.12'
       - run: python -m py_compile vps_monitor.py
       - run: python vps_monitor.py check
+        env:
+          MONITOR_DATA_DIR: ${{ runner.temp }}/vps-monitor
       - run: python test_parser.py
       - run: docker build -t vps-monitor:test .
