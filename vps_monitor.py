@@ -5,7 +5,7 @@ from collections import deque
 from datetime import datetime
 from pathlib import Path
 
-VERSION="2.1.1"
+VERSION="2.2.0"
 def env(name,default,cast=str):
  try:return cast(os.getenv(name,str(default)))
  except:return default
@@ -19,6 +19,12 @@ REPORT_DAYS=max(1,env("REPORT_RETENTION_DAYS",14,int)); REPORT_MAX=max(5,env("RE
 DATA=Path(os.getenv("MONITOR_DATA_DIR","/var/lib/vps-monitor")); REPORTS=DATA/"reports"; METRICS=DATA/"metrics"; HOST=os.getenv("MONITOR_HOSTNAME",socket.gethostname())
 TOKEN=os.getenv("TG_BOT_TOKEN",""); CHAT=os.getenv("TG_CHAT_ID",""); THREAD=os.getenv("TG_MESSAGE_THREAD_ID",""); SILENT=os.getenv("TG_DISABLE_NOTIFICATION","false").lower() in ("1","true","yes")
 AUTO_ACTION=os.getenv("AUTO_ACTION","none").lower(); AUTO_CONSENT=os.getenv("AUTO_ACTION_CONSENT","NO") == "YES"
+AUTO_CPU=os.getenv("AUTO_ACTION_CPU","false").lower() in ("1","true","yes"); AUTO_MEM=os.getenv("AUTO_ACTION_MEMORY","false").lower() in ("1","true","yes")
+AUTO_READ=os.getenv("AUTO_ACTION_DISK_READ","false").lower() in ("1","true","yes"); AUTO_WRITE=os.getenv("AUTO_ACTION_DISK_WRITE","false").lower() in ("1","true","yes")
+AUTO_KILL=os.getenv("AUTO_ACTION_ALLOW_SIGKILL","false").lower() in ("1","true","yes"); AUTO_KILL_CONSENT=os.getenv("AUTO_ACTION_SIGKILL_CONSENT","NO") == "YES"
+ACTION_CONSEC=max(2,env("AUTO_ACTION_CONSECUTIVE",3,int)); ACTION_GRACE=max(3,env("AUTO_ACTION_GRACE_SECONDS",10,int)); ACTION_HOURLY=max(1,env("AUTO_ACTION_MAX_PER_HOUR",3,int))
+PROC_CPU_MIN=max(1,env("AUTO_ACTION_PROCESS_CPU_MIN",70,float)); PROC_MEM_MIN=max(1,env("AUTO_ACTION_PROCESS_MEMORY_MIN",25,float)); PROC_READ_MIN=max(1,env("AUTO_ACTION_PROCESS_READ_MBPS_MIN",10,float))*1048576; PROC_WRITE_MIN=max(1,env("AUTO_ACTION_PROCESS_WRITE_MBPS_MIN",10,float))*1048576
+PROTECTED={x.strip() for x in os.getenv("AUTO_ACTION_PROTECTED_NAMES","systemd,sshd,ssh,init,kthreadd,kworker,rcu_sched,systemd-journal,systemd-udevd,dbus-daemon,cron,containerd,dockerd,mysqld,mariadbd,postgres,redis-server,mongod").split(",") if x.strip()}; ACTION_LOG=DATA/"actions.jsonl"; ACTION_LOG_WARN=100*1048576
 PAGE=os.sysconf("SC_PAGE_SIZE"); CLK=os.sysconf(os.sysconf_names["SC_CLK_TCK"]); SELF=os.getpid()
 MODE=os.getenv("FORENSICS_MODE","basic").lower(); CONSENT=os.getenv("FORENSICS_CONSENT","") == "YES"; FULL=MODE == "full" and CONSENT
 SELF_RSS_MAX=max(32,env("SELF_RSS_MAX_MB",80,int))*1048576; MAX_REPORT=max(1,env("MAX_REPORT_SIZE_MB",5,int))*1048576; SAMPLE_TIMEOUT=max(5,env("SELF_SAMPLE_TIMEOUT",30,float))
@@ -198,6 +204,75 @@ def send_alert(rs,path,s):
  f=common_fields();f["caption"]=caption[:1024];ok,why=telegram("sendDocument",f,path)
  if not ok:send_message(f"🚨 <b>VPS 异常告警</b>\n主机：<code>{html.escape(HOST)}</code>\n{html.escape('; '.join(rs))}\n报告保存在：<code>{html.escape(str(path))}</code>\n附件发送失败：{html.escape(why)}")
  return ok,why
+def proc_alive(pid,start):
+ v=proc_one(pid);return bool(v and v[0]==start)
+def protected(p):
+ if p["pid"] in (0,1,SELF) or not p.get("cmd"):return True
+ name=p.get("comm","");exe=os.path.basename(p.get("exe","")).strip()
+ return name in PROTECTED or exe in PROTECTED or any(name.startswith(x) for x in ("kworker","migration","watchdog","rcu_","ksoftirqd"))
+def action_candidate(s,rs):
+ if AUTO_ACTION=="none" or not AUTO_CONSENT or not FULL:return None,None
+ enabled=[]
+ if AUTO_CPU and s["cpu"]>=CPU_LIMIT:enabled.append(("cpu_pct",PROC_CPU_MIN,"CPU"))
+ if AUTO_MEM and s["mem"]>=MEM_LIMIT:enabled.append(("rss_pct",PROC_MEM_MIN,"内存"))
+ disk_hot=any(d["util"]>=IO_LIMIT for d in s["disks"])
+ if AUTO_READ and disk_hot:enabled.append(("read_Bps",PROC_READ_MIN,"磁盘读取"))
+ if AUTO_WRITE and disk_hot:enabled.append(("write_Bps",PROC_WRITE_MIN,"磁盘写入"))
+ best=None
+ for key,minimum,kind in enabled:
+  if not s["rates"]:continue
+  pid,rate=max(s["rates"].items(),key=lambda x:x[1][key])
+  if rate[key] < minimum:continue
+  p=enrich(pid,rate);p["starttime"]=proc_one(pid)[0] if proc_one(pid) else -1
+  if protected(p):continue
+  score=rate[key]/max(minimum,1)
+  if best is None or score>best[0]:best=(score,p,kind)
+ return (best[1],best[2]) if best else (None,None)
+def system_metrics(s):
+ disks="; ".join(f"{d['dev']} util={d['util']:.1f}% R={human(d['read_Bps'])}/s W={human(d['write_Bps'])}/s" for d in sorted(s["disks"],key=lambda x:x["util"],reverse=True)[:4]) or "无块设备数据"
+ return f"CPU={s['cpu']:.1f}% 内存={s['mem']:.1f}% Swap={s['swap']:.1f}% 磁盘=[{disks}]"
+def log_action(row):
+ with ACTION_LOG.open("a") as f:f.write(json.dumps(row,ensure_ascii=False,separators=(",",":"))+"\n")
+def recent_actions(now):
+ n=0
+ try:
+  with ACTION_LOG.open("rb") as f:
+   f.seek(max(0,ACTION_LOG.stat().st_size-1048576));lines=f.read().decode(errors="replace").splitlines()
+  for line in lines:
+   try:
+    if now-float(json.loads(line).get("epoch",0))<3600:n+=1
+   except:pass
+ except:pass
+ return n
+def post_metrics():
+ c0=cpu_raw();d0=disks_raw();time.sleep(1);c1=cpu_raw();d1=disks_raw();mem,swap,_=mem_raw();cpu=max(0,min(100,100*((c1[0]-c0[0])-(c1[1]-c0[1]))/max(1,c1[0]-c0[0])));ds=[]
+ for n,v in d1.items():
+  if n in d0:
+   q=d0[n];ds.append(f"{n} util={max(0,v[4]-q[4])/10:.1f}% R={human(max(0,v[1]-q[1])*512)}/s W={human(max(0,v[3]-q[3])*512)}/s")
+ return f"CPU={cpu:.1f}% 内存={mem:.1f}% Swap={swap:.1f}% 磁盘=[{'; '.join(ds[:4]) or '无块设备数据'}]"
+def act_on_process(p,kind,s):
+ now=time.time();pid=p["pid"];start=p["starttime"]
+ if recent_actions(now)>=ACTION_HOURLY:return False,"每小时动作上限已触发"
+ if not proc_alive(pid,start):return False,"PID 已退出或被复用"
+ before=system_metrics(s);cmd=p.get("cmd","")[:500];action="SIGTERM";result=""
+ try:
+  os.kill(pid,15);deadline=time.monotonic()+ACTION_GRACE
+  while time.monotonic()<deadline and proc_alive(pid,start):time.sleep(.5)
+  if proc_alive(pid,start):
+   if AUTO_KILL and AUTO_KILL_CONSENT:os.kill(pid,9);action="SIGTERM→SIGKILL";result="SIGKILL 已发送"
+   else:result="宽限期后仍存活；未授权 SIGKILL，已停止处置"
+  else:result="进程已退出"
+ except Exception as e:result=f"操作失败：{e}"
+ after=post_metrics()
+ row={"epoch":now,"time":datetime.now().astimezone().isoformat(),"host":HOST,"trigger":kind,"pid":pid,"starttime":start,"comm":p.get("comm"),"cmd":cmd,"exe":p.get("exe"),"action":action,"result":result,"before":before,"after":after,"process":{"cpu_pct":p["cpu_pct"],"rss_pct":p["rss_pct"],"read_Bps":p["read_Bps"],"write_Bps":p["write_Bps"]}}
+ log_action(row)
+ msg=f"🔴 <b>VPS 自动处置记录</b>\n主机：<code>{html.escape(HOST)}</code>\n时间：{html.escape(row['time'])}\n触发：{kind}\n动作：<b>{action}</b>\nPID：<code>{pid}</code>｜程序：<code>{html.escape(p.get('comm',''))}</code>\n命令：<code>{html.escape(cmd[:300])}</code>\n进程：CPU {p['cpu_pct']:.1f}%｜内存 {p['rss_pct']:.1f}%｜读 {human(p['read_Bps'])}/s｜写 {human(p['write_Bps'])}/s\n处置前：{html.escape(before)}\n结果：{html.escape(result)}\n处置后：{html.escape(after)}\n审计：<code>{ACTION_LOG}</code>"
+ send_message(msg)
+ try:
+  if ACTION_LOG.stat().st_size>ACTION_LOG_WARN:send_message(f"⚠️ 自动处置审计日志已超过 100MiB：<code>{ACTION_LOG}</code>。请人工决定是否归档或删除；程序不会自动清理。")
+ except:pass
+ return True,result
+
 def cleanup():
  now=time.time()
  for d,days in ((REPORTS,REPORT_DAYS),(METRICS,METRICS_DAYS)):
@@ -233,14 +308,19 @@ def config_check():
  if MODE not in ("basic","full"):errors.append("FORENSICS_MODE 只能是 basic 或 full")
  if MODE=="full" and not CONSENT:errors.append("完整取证模式未获授权：必须由用户审阅 SECURITY.md 后明确设置 FORENSICS_CONSENT=YES")
  if os.geteuid()!=0 and FULL:errors.append("完整取证模式需要 root；否则无法可靠读取其他用户进程")
- if AUTO_ACTION != "none":errors.append("当前版本禁止自动处置：AUTO_ACTION 必须为 none；监控器不会 STOP/KILL/重启业务进程")
- if AUTO_CONSENT:errors.append("当前版本未提供自动处置授权流程：AUTO_ACTION_CONSENT 必须为 NO")
- print(f"VPS Sentinel {VERSION}\nHost: {HOST}\nData: {DATA}\nMode: {MODE}; explicit consent: {'yes' if CONSENT else 'no'}\nSelf budget: RSS={human(SELF_RSS_MAX)} report={human(MAX_REPORT)} sample_timeout={SAMPLE_TIMEOUT}s\nInterval: {INTERVAL}s; process scan: {PROC_INTERVAL}s\nThresholds: CPU={CPU_LIMIT}% MEM={MEM_LIMIT}% SWAP={SWAP_LIMIT}% IO={IO_LIMIT}% FS={FS_LIMIT}%\nTelegram: {'configured' if TOKEN and CHAT else 'not configured'}")
+ if AUTO_ACTION not in ("none","terminate"):errors.append("AUTO_ACTION 只能是 none 或 terminate")
+ if AUTO_ACTION=="terminate":
+  if not AUTO_CONSENT:errors.append("自动处置未授权：AUTO_ACTION_CONSENT 必须由交互授权写为 YES")
+  if not FULL:errors.append("自动处置需要先授权 FULL 进程取证模式")
+  if not any((AUTO_CPU,AUTO_MEM,AUTO_READ,AUTO_WRITE)):errors.append("自动处置至少授权一种异常类别")
+  if not TOKEN or not CHAT:errors.append("自动处置必须配置 Telegram，确保每次动作可通知")
+ if AUTO_KILL and not AUTO_KILL_CONSENT:errors.append("启用 SIGKILL 必须单独设置 AUTO_ACTION_SIGKILL_CONSENT=YES")
+ print(f"VPS Sentinel {VERSION}\nHost: {HOST}\nData: {DATA}\nMode: {MODE}; explicit consent: {'yes' if CONSENT else 'no'}\nAuto action: {AUTO_ACTION}; consent: {'yes' if AUTO_CONSENT else 'no'}; categories: CPU={AUTO_CPU} MEM={AUTO_MEM} READ={AUTO_READ} WRITE={AUTO_WRITE}; SIGKILL={AUTO_KILL and AUTO_KILL_CONSENT}\nSelf budget: RSS={human(SELF_RSS_MAX)} report={human(MAX_REPORT)} sample_timeout={SAMPLE_TIMEOUT}s\nInterval: {INTERVAL}s; process scan: {PROC_INTERVAL}s\nThresholds: CPU={CPU_LIMIT}% MEM={MEM_LIMIT}% SWAP={SWAP_LIMIT}% IO={IO_LIMIT}% FS={FS_LIMIT}%\nTelegram: {'configured' if TOKEN and CHAT else 'not configured'}")
  if errors:
   print("ERROR: "+"; ".join(errors),file=sys.stderr);return 1
  return 0
 def main():
- print(f"VPS Sentinel {VERSION} started host={HOST} pid={SELF} interval={INTERVAL}s",flush=True); cleanup(); pc=cpu_raw();pd=disks_raw();pp=procs_raw() if FULL else {};last=time.monotonic();last_proc=last;last_metric=0;bad=good=0;active=False;last_alert=0
+ print(f"VPS Sentinel {VERSION} started host={HOST} pid={SELF} interval={INTERVAL}s",flush=True); cleanup(); pc=cpu_raw();pd=disks_raw();pp=procs_raw() if FULL else {};last=time.monotonic();last_proc=last;last_metric=0;bad=good=0;active=False;last_alert=0;candidate_key=None;candidate_hits=0
  while True:
   target=last+INTERVAL;time.sleep(max(0,target-time.monotonic()));now=time.monotonic();dt=max(.1,now-last);scan=FULL and now-last_proc>=PROC_INTERVAL*.95
   try:
@@ -249,6 +329,14 @@ def main():
    if scan:pp=np;last_proc=now
    rs=reasons(s)
    if METRICS_INTERVAL and now-last_metric>=METRICS_INTERVAL:metric(s);last_metric=now
+   p,kind=action_candidate(s,rs)
+   if p:
+    key=(p["pid"],p["starttime"],kind)
+    if key==candidate_key:candidate_hits+=1
+    else:candidate_key=key;candidate_hits=1
+    if candidate_hits>=ACTION_CONSEC:
+     acted,result=act_on_process(p,kind,s);print(f"AUTO_ACTION pid={p['pid']} kind={kind} acted={acted} result={result}",flush=True);candidate_key=None;candidate_hits=0
+   else:candidate_key=None;candidate_hits=0
    if rs:
     bad+=1;good=0
     if bad>=CONSEC and (not active or time.time()-last_alert>=COOLDOWN):

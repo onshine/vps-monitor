@@ -47,7 +47,7 @@ Linux 的 `hidepid`、不同 UID 和容器边界可能阻止普通用户读取�
 - 不读取文件内容，只记录 fd 指向的路径。
 - 不扫描 `/root`、用户家目录、SSH 密钥、浏览器数据或数据库内容。
 - 不执行自动 kill、暂停、限速、重启、封禁 IP、删除文件等破坏性动作。
-- 当前版本强制 `AUTO_ACTION=none` 与 `AUTO_ACTION_CONSENT=NO`；其他值会导致配置检查失败并拒绝启动。任何未来自动干预都必须有独立于 FULL 取证权限的二次明确授权、目标白名单、可逆动作、超时恢复及审计。
+- 当前版本默认 `AUTO_ACTION=none` 与 `AUTO_ACTION_CONSENT=NO`。自动处置必须先授权 FULL、配置 Telegram，再通过 `vps-monitorctl authorize-actions` 二次红色授权，并逐项选择 CPU、内存、磁盘读、磁盘写；未选择类别严格禁止。默认只 SIGTERM，SIGKILL 需第三层输入 `KILL` 授权。
 - 不开放监听端口、不提供 Web 管理后台。
 - 不将 Telegram Token 写入报告或日志。
 - 不自动上传历史指标；只有异常报告和测试消息发送到配置的 Telegram。
