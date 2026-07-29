@@ -86,7 +86,7 @@ sudo ./install.sh
 sudo apt-get update && sudo apt-get install -y wget unzip
 ```
 
-安装器支持 Debian/Ubuntu、Alpine、RHEL/Fedora 系列。首次安装会询问 BASIC/FULL；FULL 必须输入大写 `YES`。安装完成后配置 Telegram：
+安装器支持 Debian/Ubuntu、Alpine、RHEL/Fedora 系列。缺少下载或解压工具时，快速安装器会先明确询问是否自动安装。首次安装会显示清晰的交互步骤：先输入 `1`（BASIC）或 `2`（FULL）；选择 FULL 后会再次停下来要求输入大写 `YES`。所有输入直接从当前终端 `/dev/tty` 读取，不会因 `curl` 管道或 `sudo` 丢失。安装完成后配置 Telegram：
 
 ```bash
 sudo vps-monitorctl config
