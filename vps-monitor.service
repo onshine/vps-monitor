@@ -38,8 +38,8 @@ RestrictSUIDSGID=yes
 LockPersonality=yes
 RestrictRealtime=yes
 
-StandardOutput=journal
-StandardError=journal
+StandardOutput=append:/var/lib/vps-monitor/runtime.log
+StandardError=append:/var/lib/vps-monitor/runtime.log
 SyslogIdentifier=vps-sentinel
 
 [Install]

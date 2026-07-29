@@ -1,45 +1,46 @@
 #!/bin/sh
 set -eu
-SERVICE=vps-monitor;CONFIG=/etc/vps-monitor.env;TTY=/dev/tty
-if [ -t 1 ];then B='\033[1;34m';Y='\033[1;33m';R='\033[1;31m';G='\033[1;32m';N='\033[0m';else B=;Y=;R=;G=;N=;fi
+SERVICE=vps-monitor;CONFIG=/etc/vps-monitor.env;DATA=/var/lib/vps-monitor;RUNTIME=$DATA/runtime.log;TTY=/dev/tty
+if [ -t 1 ];then G='\033[1;32m';Y='\033[1;33m';R='\033[1;31m';N='\033[0m';else G=;Y=;R=;N=;fi
 say(){ printf '%b%s%b\n' "$1" "$2" "$N";};ask(){ printf '%b%s%b' "$1" "$2" "$N">"$TTY";IFS= read -r REPLY<"$TTY"||REPLY=;}
-usage(){ cat <<'EOF'
-用法：vps-monitorctl 命令
- status状态  logs日志  config编辑配置  set修改变量  check检查配置
- test测试TG  restart重启  reports报告  actions处置记录  version版本
- authorize-actions授权自动处置  disable-actions关闭自动处置  uninstall卸载
-EOF
-}
-need_root(){ [ "$(id -u)" = 0 ]||{ echo '请使用 sudo';exit 1;};}
+need_root(){ [ "$(id -u)" = 0 ]||{ say "$R" '请使用 sudo。';exit 1;};}
 load(){ set -a;
  # shellcheck disable=SC1090
  . "$CONFIG"
  set +a;}
-check(){ load;/usr/bin/python3 /opt/vps-monitor/vps_monitor.py check;}
 setval(){ k=$1;v=$2;if grep -q "^${k}=" "$CONFIG";then sed -i "s|^${k}=.*|${k}=${v}|" "$CONFIG";else printf '%s=%s\n' "$k" "$v">>"$CONFIG";fi;}
-maybe_backup(){ ask "$B" '是否备份当前配置？输入 Y 备份 [y/N]：';case "$REPLY" in Y|y) BACKUP="$CONFIG.backup.$(date +%Y%m%d-%H%M%S)";cp -p "$CONFIG" "$BACKUP";say "$G" "已授权备份：$BACKUP";;*) BACKUP=;say "$B" '未授权备份：不创建备份。';;esac;}
+mask(){ v=$1;[ -z "$v" ]&&{ printf '未配置';return;};n=${#v};if [ "$n" -le 8 ];then printf '********';else printf '%s…%s' "$(printf '%s' "$v"|cut -c1-6)" "$(printf '%s' "$v"|rev|cut -c1-4|rev)";fi;}
+yn(){ [ "${1:-false}" = true ]&&printf '已授权' || printf '未授权';}
+check(){ load;/usr/bin/python3 /opt/vps-monitor/vps_monitor.py check;}
+show_config(){ load;say "$G" '当前配置和权限';printf '1. Bot Token：%s\n' "$(mask "${TG_BOT_TOKEN:-}")";printf '2. Chat ID：%s\n' "${TG_CHAT_ID:-未配置}";printf '3. 群组话题 ID：%s\n' "${TG_MESSAGE_THREAD_ID:-未配置}";printf '4. TG 通知：%s\n' "$([ "${TG_DISABLE_NOTIFICATION:-false}" = true ]&&echo 静默||echo 正常提醒)";printf '5. 取证权限：%s\n' "${FORENSICS_MODE:-basic}";printf '6. CPU 自动处置：%s\n' "$(yn "${AUTO_ACTION_CPU:-false}")";printf '7. 内存自动处置：%s\n' "$(yn "${AUTO_ACTION_MEMORY:-false}")";printf '8. 磁盘读自动处置：%s\n' "$(yn "${AUTO_ACTION_DISK_READ:-false}")";printf '9. 磁盘写自动处置：%s\n' "$(yn "${AUTO_ACTION_DISK_WRITE:-false}")";printf '10. SIGKILL：%s\n' "$(yn "${AUTO_ACTION_ALLOW_SIGKILL:-false}")";printf '11. 阈值：CPU %s%%｜内存 %s%%｜磁盘 I/O %s%%\n' "${CPU_THRESHOLD:-90}" "${MEMORY_THRESHOLD:-90}" "${DISK_IO_THRESHOLD:-90}";}
+configure(){
+ need_root;load
+ while :;do
+  printf '\n';say "$G" '修改配置和权限';say "$G" '1. Telegram Bot Token';say "$G" '2. Chat ID';say "$G" '3. 群组话题 ID';say "$G" '4. 通知声音/静默';say "$Y" '5. BASIC/FULL 取证权限';say "$R" '6. 自动处置权限';say "$G" '7. 资源阈值';say "$G" '8. 查看当前配置';say "$G" '0. 返回';ask "$G" '请选择 [0-8]：'
+  case "$REPLY" in
+   1) ask "$G" '输入新 Bot Token（输入 0 取消）：';[ "$REPLY" = 0 ]||setval TG_BOT_TOKEN "$REPLY";;
+   2) ask "$G" '输入新 Chat ID（输入 0 取消）：';[ "$REPLY" = 0 ]||setval TG_CHAT_ID "$REPLY";;
+   3) ask "$G" '输入话题 ID；输入 CLEAR 清空；输入 0 取消：';case "$REPLY" in 0);;CLEAR)setval TG_MESSAGE_THREAD_ID '';;*)setval TG_MESSAGE_THREAD_ID "$REPLY";;esac;;
+   4) ask "$G" '1. 正常提醒  2. 静默  0.取消：';case "$REPLY" in 1)setval TG_DISABLE_NOTIFICATION false;;2)setval TG_DISABLE_NOTIFICATION true;;esac;;
+   5) ask "$Y" '1. BASIC低危  2. FULL高危  0.取消：';case "$REPLY" in 1)setval FORENSICS_MODE basic;setval FORENSICS_CONSENT NO;setval AUTO_ACTION none;setval AUTO_ACTION_CONSENT NO;;2)say "$R" 'FULL 将以 root 读取进程路径、端口和日志并发送 TG。';ask "$R" '同意请输入大写 YES：';if [ "$REPLY" = YES ];then setval FORENSICS_MODE full;setval FORENSICS_CONSENT YES;else say "$R" '未授权，不修改。';fi;;esac;;
+   6) action_menu;;
+   7) ask "$G" 'CPU 阈值(1-100)：';setval CPU_THRESHOLD "$REPLY";ask "$G" '内存阈值(1-100)：';setval MEMORY_THRESHOLD "$REPLY";ask "$G" '磁盘 I/O 阈值(1-100)：';setval DISK_IO_THRESHOLD "$REPLY";;
+   8) show_config;;0)break;;*)say "$R" '无效选项。';;
+  esac
+ done
+ chmod 600 "$CONFIG";if check;then systemctl restart "$SERVICE";say "$G" '配置有效，服务已重启。';else say "$R" '配置检查失败，服务未重启；请重新修改。';exit 1;fi
+}
+action_menu(){
+ load
+ if [ "${FORENSICS_MODE:-basic}" != full ] || [ "${FORENSICS_CONSENT:-NO}" != YES ];then say "$R" '禁止：先授权 FULL 取证。';return;fi
+ say "$R" '高危：自动终止异常主因可能中断服务或损坏数据。';ask "$R" '同意修改自动处置请输入大写 YES：';[ "$REPLY" = YES ]||{ say "$R" '未授权，不修改。';return;}
+ ask "$Y" 'CPU异常自动处置？[y/N]：';case "$REPLY" in y|Y)setval AUTO_ACTION_CPU true;;*)setval AUTO_ACTION_CPU false;;esac
+ ask "$Y" '内存异常自动处置？[y/N]：';case "$REPLY" in y|Y)setval AUTO_ACTION_MEMORY true;;*)setval AUTO_ACTION_MEMORY false;;esac
+ ask "$Y" '磁盘读取异常自动处置？[y/N]：';case "$REPLY" in y|Y)setval AUTO_ACTION_DISK_READ true;;*)setval AUTO_ACTION_DISK_READ false;;esac
+ ask "$Y" '磁盘写入异常自动处置？[y/N]：';case "$REPLY" in y|Y)setval AUTO_ACTION_DISK_WRITE true;;*)setval AUTO_ACTION_DISK_WRITE false;;esac
+ ask "$R" '允许 SIGKILL？输入 KILL 授权，其他输入禁止：';case "$REPLY" in KILL)setval AUTO_ACTION_ALLOW_SIGKILL true;setval AUTO_ACTION_SIGKILL_CONSENT YES;;*)setval AUTO_ACTION_ALLOW_SIGKILL false;setval AUTO_ACTION_SIGKILL_CONSENT NO;;esac
+ if grep -Eq '^AUTO_ACTION_(CPU|MEMORY|DISK_READ|DISK_WRITE)=true' "$CONFIG";then setval AUTO_ACTION terminate;setval AUTO_ACTION_CONSENT YES;else setval AUTO_ACTION none;setval AUTO_ACTION_CONSENT NO;fi
+}
+usage(){ echo '命令：status|logs|config|show-config|configure|test|restart|reports|actions|version|delete-log|uninstall';}
 case "${1:-}" in
- status) systemctl status "$SERVICE" --no-pager --full;;
- logs) journalctl -u "$SERVICE" -f -o cat;;
- config) need_root;maybe_backup;${EDITOR:-nano} "$CONFIG";chmod 600 "$CONFIG";if check;then systemctl restart "$SERVICE";say "$G" '配置有效，服务已重启。';else say "$R" '配置无效，服务未重启。请重新编辑修复。';exit 1;fi;;
- set) need_root;[ "$#" = 3 ]||{ usage;exit 1;};echo "$2"|grep -Eq '^[A-Z][A-Z0-9_]*$'||{ echo '变量名无效';exit 1;};maybe_backup;setval "$2" "$3";chmod 600 "$CONFIG";if check;then systemctl restart "$SERVICE";say "$G" "已更新 $2 并重启。";else say "$R" '配置无效，服务未重启。';exit 1;fi;;
- authorize-actions)
-  need_root;load
-  if [ "${FORENSICS_MODE:-basic}" != full ]||[ "${FORENSICS_CONSENT:-NO}" != YES ];then say "$R" '禁止：自动处置必须先通过安装器授权 FULL 取证。';exit 2;fi
-  if [ -z "${TG_BOT_TOKEN:-}" ]||[ -z "${TG_CHAT_ID:-}" ];then say "$R" '禁止：必须先配置并测试 Telegram。';exit 2;fi
-  say "$R" '高危：将对连续确认的异常主因发送 SIGTERM，可能中断服务或造成数据损失。'
-  say "$Y" '数据库、SSH、系统进程默认保护；每次动作写日志并发送 TG。'
-  ask "$R" '同意启用请输入大写 YES：';[ "$REPLY" = YES ]||{ say "$R" '未授权，不做任何修改。';exit 2;}
-  ask "$Y" '授权 CPU 异常处置？[y/N]：';case "$REPLY" in Y|y) ac=true;;*)ac=false;;esac
-  ask "$Y" '授权内存异常处置？[y/N]：';case "$REPLY" in Y|y) am=true;;*)am=false;;esac
-  ask "$Y" '授权磁盘读取异常处置？[y/N]：';case "$REPLY" in Y|y) ar=true;;*)ar=false;;esac
-  ask "$Y" '授权磁盘写入异常处置？[y/N]：';case "$REPLY" in Y|y) aw=true;;*)aw=false;;esac
-  [ "$ac$am$ar$aw" != falsefalsefalsefalse ]||{ say "$R" '未授权任何类别，不做修改。';exit 2;}
-  ask "$R" 'SIGTERM 超时后允许强制 SIGKILL？高危，输入 KILL 同意 [默认禁止]：';case "$REPLY" in KILL)ak=true;akc=YES;;*)ak=false;akc=NO;;esac
-  maybe_backup
-  setval AUTO_ACTION terminate;setval AUTO_ACTION_CONSENT YES;setval AUTO_ACTION_CPU "$ac";setval AUTO_ACTION_MEMORY "$am";setval AUTO_ACTION_DISK_READ "$ar";setval AUTO_ACTION_DISK_WRITE "$aw";setval AUTO_ACTION_ALLOW_SIGKILL "$ak";setval AUTO_ACTION_SIGKILL_CONSENT "$akc";chmod 600 "$CONFIG"
-  check;systemctl restart "$SERVICE";say "$R" '自动处置已按所选类别启用。请运行 vps-monitorctl check 复核。';;
- disable-actions) need_root;setval AUTO_ACTION none;setval AUTO_ACTION_CONSENT NO;setval AUTO_ACTION_ALLOW_SIGKILL false;setval AUTO_ACTION_SIGKILL_CONSENT NO;chmod 600 "$CONFIG";systemctl restart "$SERVICE";say "$G" '自动处置已关闭。';;
- check) check;;test) load;/usr/bin/python3 /opt/vps-monitor/vps_monitor.py test-telegram;;restart) need_root;systemctl restart "$SERVICE";systemctl status "$SERVICE" --no-pager --full;;reports) ls -lht /var/lib/vps-monitor/reports 2>/dev/null||echo '暂无异常报告。';;actions) ls -lh /var/lib/vps-monitor/actions.jsonl 2>/dev/null&&tail -n 20 /var/lib/vps-monitor/actions.jsonl||echo '暂无自动处置记录。';;version) /usr/bin/python3 /opt/vps-monitor/vps_monitor.py version;;
- uninstall) need_root;systemctl disable --now "$SERVICE"||true;rm -f /etc/systemd/system/vps-monitor.service /usr/local/bin/vps-monitorctl;rm -rf /opt/vps-monitor;systemctl daemon-reload;echo '程序已卸载；配置和历史数据已保留。';;
- *) usage;exit 1;;esac
+ status)systemctl status "$SERVICE" --no-pager --full;;logs)tail -n "${2:-10}" "$RUNTIME" 2>/dev/null||echo '暂无脚本进程日志。';;show-config)show_config;;configure)configure;;config)configure;;check)check;;test)load;/usr/bin/python3 /opt/vps-monitor/vps_monitor.py test-telegram;;restart)need_root;systemctl restart "$SERVICE";systemctl status "$SERVICE" --no-pager --full;;reports)ls -lht "$DATA/reports" 2>/dev/null||echo '暂无报告。';;actions)tail -n 20 "$DATA/actions.jsonl" 2>/dev/null||echo '暂无处置记录。';;version)/usr/bin/python3 /opt/vps-monitor/vps_monitor.py version;;delete-log)need_root;say "$R" '高危：将删除专用脚本进程日志，不影响处置审计和系统 journal。';ask "$R" '确认删除请输入大写 DELETE：';if [ "$REPLY" = DELETE ];then :>"$RUNTIME";say "$G" '脚本进程日志已清空。';else say "$R" '未授权，不删除。';fi;;uninstall)need_root;systemctl disable --now "$SERVICE"||true;rm -f /etc/systemd/system/vps-monitor.service /usr/local/bin/vps-monitorctl;rm -rf /opt/vps-monitor;systemctl daemon-reload;echo '程序已卸载；配置和数据保留。';;*)usage;exit 1;;esac

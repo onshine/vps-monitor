@@ -33,6 +33,6 @@ else
 fi
 sha256sum -c SHA256SUMS
 unzip -q vps-monitor.zip
-chmod +x install.sh
-printf '\n已下载并校验最新 Release。现在进入交互式安全安装。\n\n'
-if [ "$(id -u)" = 0 ]; then exec ./install.sh; else exec sudo ./install.sh; fi
+chmod +x menu.sh install.sh vps-monitorctl
+printf '\n已下载并校验最新 Release。现在进入 VPS Monitor 管理菜单。\n\n'
+exec ./menu.sh
