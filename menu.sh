@@ -13,9 +13,9 @@ while :;do
  case "$REPLY" in
   1) if installed;then say "$Y" '已检测到现有安装，请选择 2 更新。';else download;rootrun ./install.sh install;fi;;
   2) if installed;then download;rootrun ./install.sh update;else say "$Y" '尚未安装，请选择 1 安装。';fi;;
-  3) if installed;then rootrun /usr/local/bin/vps-monitorctl show-config;else say "$Y" '尚未安装。';fi;;
-  4) if installed;then rootrun /usr/local/bin/vps-monitorctl configure;else say "$Y" '尚未安装。';fi;;
-  5) if installed;then rootrun /usr/local/bin/vps-monitorctl logs 10;else say "$Y" '尚未安装。';fi;;
+  3) if installed;then rootrun /usr/local/bin/vps-monitorctl show-config;ask "$G" '按回车或输入 F 返回主菜单；输入 0 退出：';[ "$REPLY" = 0 ]&&bye;else say "$Y" '尚未安装。';fi;;
+  4) if installed;then if rootrun /usr/local/bin/vps-monitorctl configure;then :;else rc=$?;[ "$rc" = 20 ]&&bye;fi;else say "$Y" '尚未安装。';fi;;
+  5) if installed;then rootrun /usr/local/bin/vps-monitorctl logs 10;ask "$G" '按回车或输入 F 返回主菜单；输入 0 退出：';[ "$REPLY" = 0 ]&&bye;else say "$Y" '尚未安装。';fi;;
   6) if installed;then rootrun /usr/local/bin/vps-monitorctl delete-log;else say "$Y" '尚未安装。';fi;;
   7) if installed;then rootrun /usr/local/bin/vps-monitorctl uninstall;else say "$Y" '尚未安装。';fi;;
   0)bye;;*)say "$R" '无效选项，请输入 0–7。';;

@@ -9,38 +9,36 @@ load(){ set -a;
  . "$CONFIG"
  set +a;}
 setval(){ k=$1;v=$2;if grep -q "^${k}=" "$CONFIG";then sed -i "s|^${k}=.*|${k}=${v}|" "$CONFIG";else printf '%s=%s\n' "$k" "$v">>"$CONFIG";fi;}
-mask(){ v=$1;[ -z "$v" ]&&{ printf '未配置';return;};n=${#v};if [ "$n" -le 8 ];then printf '********';else printf '%s…%s' "$(printf '%s' "$v"|cut -c1-6)" "$(printf '%s' "$v"|rev|cut -c1-4|rev)";fi;}
+mask(){ v=$1;[ -z "$v" ]&&{ printf '未配置';return;};if [ ${#v} -le 8 ];then printf '********';else printf '%s…%s' "$(printf %s "$v"|cut -c1-6)" "$(printf %s "$v"|rev|cut -c1-4|rev)";fi;}
 yn(){ [ "${1:-false}" = true ]&&printf '已授权' || printf '未授权';}
+pause_back(){ ask "$G" '按回车或输入 F 返回上一级；输入 0 退出：';[ "$REPLY" = 0 ]&&return 20;return 0;}
 check(){ load;/usr/bin/python3 /opt/vps-monitor/vps_monitor.py check;}
-show_config(){ load;say "$G" '当前配置和权限';printf '1. Bot Token：%s\n' "$(mask "${TG_BOT_TOKEN:-}")";printf '2. Chat ID：%s\n' "${TG_CHAT_ID:-未配置}";printf '3. 群组话题 ID：%s\n' "${TG_MESSAGE_THREAD_ID:-未配置}";printf '4. TG 通知：%s\n' "$([ "${TG_DISABLE_NOTIFICATION:-false}" = true ]&&echo 静默||echo 正常提醒)";printf '5. 取证权限：%s\n' "${FORENSICS_MODE:-basic}";printf '6. CPU 自动处置：%s\n' "$(yn "${AUTO_ACTION_CPU:-false}")";printf '7. 内存自动处置：%s\n' "$(yn "${AUTO_ACTION_MEMORY:-false}")";printf '8. 磁盘读自动处置：%s\n' "$(yn "${AUTO_ACTION_DISK_READ:-false}")";printf '9. 磁盘写自动处置：%s\n' "$(yn "${AUTO_ACTION_DISK_WRITE:-false}")";printf '10. SIGKILL：%s\n' "$(yn "${AUTO_ACTION_ALLOW_SIGKILL:-false}")";printf '11. 阈值：CPU %s%%｜内存 %s%%｜磁盘 I/O %s%%\n' "${CPU_THRESHOLD:-90}" "${MEMORY_THRESHOLD:-90}" "${DISK_IO_THRESHOLD:-90}";}
-configure(){
- need_root;load
- while :;do
-  printf '\n';say "$G" '修改配置和权限';say "$G" '1. Telegram Bot Token';say "$G" '2. Chat ID';say "$G" '3. 群组话题 ID';say "$G" '4. 通知声音/静默';say "$Y" '5. BASIC/FULL 取证权限';say "$R" '6. 自动处置权限';say "$G" '7. 资源阈值';say "$G" '8. 查看当前配置';say "$G" '0. 返回';ask "$G" '请选择 [0-8]：'
+show_config(){ load;printf '\n';say "$G" '========== Telegram 通知 ==========';printf 'Bot Token：%s\n' "$(mask "${TG_BOT_TOKEN:-}")";printf 'Chat ID：%s\n' "${TG_CHAT_ID:-未配置}";printf '群组话题 ID：%s\n' "${TG_MESSAGE_THREAD_ID:-未配置}";printf '通知方式：%s\n' "$([ "${TG_DISABLE_NOTIFICATION:-false}" = true ]&&echo 静默||echo 声音/振动)";say "$G" '---------- 监控阈值 ----------';printf 'CPU：%s%%｜内存：%s%%｜Swap：%s%%\n' "${CPU_THRESHOLD:-90}" "${MEMORY_THRESHOLD:-90}" "${SWAP_THRESHOLD:-90}";printf '磁盘 I/O：%s%%｜空间：%s%%｜inode：%s%%\n' "${DISK_IO_THRESHOLD:-90}" "${DISK_SPACE_THRESHOLD:-90}" "${INODE_THRESHOLD:-90}";say "$Y" '---------- 取证权限 ----------';printf '模式：%s｜FULL授权：%s\n' "${FORENSICS_MODE:-basic}" "${FORENSICS_CONSENT:-NO}";say "$R" '---------- 自动处置权限 ----------';printf '总开关：%s｜授权：%s\n' "${AUTO_ACTION:-none}" "${AUTO_ACTION_CONSENT:-NO}";printf 'CPU：%s｜内存：%s\n' "$(yn "${AUTO_ACTION_CPU:-false}")" "$(yn "${AUTO_ACTION_MEMORY:-false}")";printf '磁盘读：%s｜磁盘写：%s\n' "$(yn "${AUTO_ACTION_DISK_READ:-false}")" "$(yn "${AUTO_ACTION_DISK_WRITE:-false}")";printf 'SIGKILL：%s\n' "$(yn "${AUTO_ACTION_ALLOW_SIGKILL:-false}")";say "$G" '---------- 自身资源限制 ----------';printf 'RSS退出线：%sMiB｜报告上限：%sMiB\n' "${SELF_RSS_MAX_MB:-80}" "${MAX_REPORT_SIZE_MB:-5}";}
+disable_all(){ setval AUTO_ACTION none;setval AUTO_ACTION_CONSENT NO;setval AUTO_ACTION_CPU false;setval AUTO_ACTION_MEMORY false;setval AUTO_ACTION_DISK_READ false;setval AUTO_ACTION_DISK_WRITE false;setval AUTO_ACTION_ALLOW_SIGKILL false;setval AUTO_ACTION_SIGKILL_CONSENT NO;}
+enable_standard(){ setval FORENSICS_MODE full;setval FORENSICS_CONSENT YES;setval AUTO_ACTION terminate;setval AUTO_ACTION_CONSENT YES;setval AUTO_ACTION_CPU true;setval AUTO_ACTION_MEMORY true;setval AUTO_ACTION_DISK_READ true;setval AUTO_ACTION_DISK_WRITE true;setval AUTO_ACTION_ALLOW_SIGKILL false;setval AUTO_ACTION_SIGKILL_CONSENT NO;}
+action_menu(){ need_root
+ while :;do load;printf '\n';say "$R" '自动处置权限（高危）';say "$G" '1. 查看当前自动处置权限';say "$R" '2. 一键开启全部标准授权（FULL + 四类 + SIGTERM）';say "$R" '3. 单独授权或取消各资源类别';say "$R" '4. 单独授权 SIGKILL';say "$G" '5. 一键关闭全部自动处置授权';say "$G" 'F. 返回上一级菜单';say "$G" '0. 退出脚本';ask "$G" '请选择：'
   case "$REPLY" in
-   1) ask "$G" '输入新 Bot Token（输入 0 取消）：';[ "$REPLY" = 0 ]||setval TG_BOT_TOKEN "$REPLY";;
-   2) ask "$G" '输入新 Chat ID（输入 0 取消）：';[ "$REPLY" = 0 ]||setval TG_CHAT_ID "$REPLY";;
-   3) ask "$G" '输入话题 ID；输入 CLEAR 清空；输入 0 取消：';case "$REPLY" in 0);;CLEAR)setval TG_MESSAGE_THREAD_ID '';;*)setval TG_MESSAGE_THREAD_ID "$REPLY";;esac;;
-   4) ask "$G" '1. 正常提醒  2. 静默  0.取消：';case "$REPLY" in 1)setval TG_DISABLE_NOTIFICATION false;;2)setval TG_DISABLE_NOTIFICATION true;;esac;;
-   5) ask "$Y" '1. BASIC低危  2. FULL高危  0.取消：';case "$REPLY" in 1)setval FORENSICS_MODE basic;setval FORENSICS_CONSENT NO;setval AUTO_ACTION none;setval AUTO_ACTION_CONSENT NO;;2)say "$R" 'FULL 将以 root 读取进程路径、端口和日志并发送 TG。';ask "$R" '同意请输入大写 YES：';if [ "$REPLY" = YES ];then setval FORENSICS_MODE full;setval FORENSICS_CONSENT YES;else say "$R" '未授权，不修改。';fi;;esac;;
-   6) action_menu;;
-   7) ask "$G" 'CPU 阈值(1-100)：';setval CPU_THRESHOLD "$REPLY";ask "$G" '内存阈值(1-100)：';setval MEMORY_THRESHOLD "$REPLY";ask "$G" '磁盘 I/O 阈值(1-100)：';setval DISK_IO_THRESHOLD "$REPLY";;
-   8) show_config;;0)break;;*)say "$R" '无效选项。';;
+   1)show_config;pause_back||return 20;;
+   2)if [ -z "${TG_BOT_TOKEN:-}" ]||[ -z "${TG_CHAT_ID:-}" ];then say "$R" '禁止：请先配置并测试 Telegram。';else say "$R" '将开启 FULL 取证及 CPU/内存/磁盘读写 SIGTERM 自动处置。';say "$Y" '不会开启 SIGKILL；数据库、SSH 和系统进程仍受保护。';ask "$R" '同意请输入大写 YES：';if [ "$REPLY" = YES ];then enable_standard;chmod 600 "$CONFIG";check&&systemctl restart "$SERVICE";say "$R" '全部标准授权已开启。';else say "$R" '未授权，不修改。';fi;fi;;
+   3)if [ "${FORENSICS_MODE:-basic}" != full ];then say "$R" '请先选择 2 开启 FULL 与标准授权，再逐项关闭。';else ask "$Y" 'CPU处置 [y/N]：';case "$REPLY" in y|Y)setval AUTO_ACTION_CPU true;;*)setval AUTO_ACTION_CPU false;;esac;ask "$Y" '内存处置 [y/N]：';case "$REPLY" in y|Y)setval AUTO_ACTION_MEMORY true;;*)setval AUTO_ACTION_MEMORY false;;esac;ask "$Y" '磁盘读取处置 [y/N]：';case "$REPLY" in y|Y)setval AUTO_ACTION_DISK_READ true;;*)setval AUTO_ACTION_DISK_READ false;;esac;ask "$Y" '磁盘写入处置 [y/N]：';case "$REPLY" in y|Y)setval AUTO_ACTION_DISK_WRITE true;;*)setval AUTO_ACTION_DISK_WRITE false;;esac;if grep -Eq '^AUTO_ACTION_(CPU|MEMORY|DISK_READ|DISK_WRITE)=true' "$CONFIG";then setval AUTO_ACTION terminate;setval AUTO_ACTION_CONSENT YES;else disable_all;fi;chmod 600 "$CONFIG";check&&systemctl restart "$SERVICE";say "$G" '逐项权限已保存。';fi;;
+   4)say "$R" 'SIGKILL 会强制终止进程，可能损坏数据。';ask "$R" '授权请输入大写 KILL；输入 OFF 关闭：';case "$REPLY" in KILL)setval AUTO_ACTION_ALLOW_SIGKILL true;setval AUTO_ACTION_SIGKILL_CONSENT YES;say "$R" 'SIGKILL 已授权。';;OFF)setval AUTO_ACTION_ALLOW_SIGKILL false;setval AUTO_ACTION_SIGKILL_CONSENT NO;say "$G" 'SIGKILL 已关闭。';;*)say "$R" '未授权，不修改。';;esac;chmod 600 "$CONFIG";check&&systemctl restart "$SERVICE";;
+   5)ask "$G" '确认关闭全部自动处置？输入 YES：';if [ "$REPLY" = YES ];then disable_all;chmod 600 "$CONFIG";systemctl restart "$SERVICE";say "$G" '全部自动处置已关闭。';else say "$G" '未确认，不修改。';fi;;
+   F|f|'')return 0;;0)return 20;;*)say "$R" '无效选项，仍停留在当前菜单。';;
   esac
  done
- chmod 600 "$CONFIG";if check;then systemctl restart "$SERVICE";say "$G" '配置有效，服务已重启。';else say "$R" '配置检查失败，服务未重启；请重新修改。';exit 1;fi
 }
-action_menu(){
- load
- if [ "${FORENSICS_MODE:-basic}" != full ] || [ "${FORENSICS_CONSENT:-NO}" != YES ];then say "$R" '禁止：先授权 FULL 取证。';return;fi
- say "$R" '高危：自动终止异常主因可能中断服务或损坏数据。';ask "$R" '同意修改自动处置请输入大写 YES：';[ "$REPLY" = YES ]||{ say "$R" '未授权，不修改。';return;}
- ask "$Y" 'CPU异常自动处置？[y/N]：';case "$REPLY" in y|Y)setval AUTO_ACTION_CPU true;;*)setval AUTO_ACTION_CPU false;;esac
- ask "$Y" '内存异常自动处置？[y/N]：';case "$REPLY" in y|Y)setval AUTO_ACTION_MEMORY true;;*)setval AUTO_ACTION_MEMORY false;;esac
- ask "$Y" '磁盘读取异常自动处置？[y/N]：';case "$REPLY" in y|Y)setval AUTO_ACTION_DISK_READ true;;*)setval AUTO_ACTION_DISK_READ false;;esac
- ask "$Y" '磁盘写入异常自动处置？[y/N]：';case "$REPLY" in y|Y)setval AUTO_ACTION_DISK_WRITE true;;*)setval AUTO_ACTION_DISK_WRITE false;;esac
- ask "$R" '允许 SIGKILL？输入 KILL 授权，其他输入禁止：';case "$REPLY" in KILL)setval AUTO_ACTION_ALLOW_SIGKILL true;setval AUTO_ACTION_SIGKILL_CONSENT YES;;*)setval AUTO_ACTION_ALLOW_SIGKILL false;setval AUTO_ACTION_SIGKILL_CONSENT NO;;esac
- if grep -Eq '^AUTO_ACTION_(CPU|MEMORY|DISK_READ|DISK_WRITE)=true' "$CONFIG";then setval AUTO_ACTION terminate;setval AUTO_ACTION_CONSENT YES;else setval AUTO_ACTION none;setval AUTO_ACTION_CONSENT NO;fi
+configure(){ need_root
+ while :;do load;printf '\n';say "$G" '修改现有配置和权限';say "$G" '1. Telegram 配置';say "$G" '2. 通知声音/静默';say "$Y" '3. BASIC/FULL 取证权限';say "$R" '4. 自动处置权限';say "$G" '5. 资源阈值';say "$G" '6. 查看全部配置和权限';say "$G" 'F. 返回上一级菜单';say "$G" '0. 退出脚本';ask "$G" '请选择：'
+  case "$REPLY" in
+   1)ask "$G" 'Bot Token（回车不改，CLEAR清空）：';if [ -n "$REPLY" ];then if [ "$REPLY" = CLEAR ];then setval TG_BOT_TOKEN '';else setval TG_BOT_TOKEN "$REPLY";fi;fi;ask "$G" 'Chat ID（回车不改，CLEAR清空）：';if [ -n "$REPLY" ];then if [ "$REPLY" = CLEAR ];then setval TG_CHAT_ID '';else setval TG_CHAT_ID "$REPLY";fi;fi;ask "$G" '话题 ID（回车不改，CLEAR清空）：';if [ -n "$REPLY" ];then if [ "$REPLY" = CLEAR ];then setval TG_MESSAGE_THREAD_ID '';else setval TG_MESSAGE_THREAD_ID "$REPLY";fi;fi;;
+   2)ask "$G" '1. 正常提醒  2. 静默  F.返回：';case "$REPLY" in 1)setval TG_DISABLE_NOTIFICATION false;;2)setval TG_DISABLE_NOTIFICATION true;;esac;;
+   3)ask "$Y" '1. BASIC低危  2. FULL高危  F.返回：';case "$REPLY" in 1)setval FORENSICS_MODE basic;setval FORENSICS_CONSENT NO;disable_all;;2)say "$R" 'FULL 以 root 读取进程路径、端口和日志并发 TG。';ask "$R" '同意请输入 YES：';if [ "$REPLY" = YES ];then setval FORENSICS_MODE full;setval FORENSICS_CONSENT YES;else say "$R" '未授权。';fi;;esac;;
+   4)action_menu||return 20;;
+   5)ask "$G" 'CPU阈值：';setval CPU_THRESHOLD "$REPLY";ask "$G" '内存阈值：';setval MEMORY_THRESHOLD "$REPLY";ask "$G" '磁盘I/O阈值：';setval DISK_IO_THRESHOLD "$REPLY";;
+   6)show_config;pause_back||return 20;;F|f|'')chmod 600 "$CONFIG";check&&systemctl restart "$SERVICE";return 0;;0)return 20;;*)say "$R" '无效选项，仍停留在当前菜单。';;
+  esac
+ done
 }
-usage(){ echo '命令：status|logs|config|show-config|configure|test|restart|reports|actions|version|delete-log|uninstall';}
-case "${1:-}" in
- status)systemctl status "$SERVICE" --no-pager --full;;logs)tail -n "${2:-10}" "$RUNTIME" 2>/dev/null||echo '暂无脚本进程日志。';;show-config)show_config;;configure)configure;;config)configure;;check)check;;test)load;/usr/bin/python3 /opt/vps-monitor/vps_monitor.py test-telegram;;restart)need_root;systemctl restart "$SERVICE";systemctl status "$SERVICE" --no-pager --full;;reports)ls -lht "$DATA/reports" 2>/dev/null||echo '暂无报告。';;actions)tail -n 20 "$DATA/actions.jsonl" 2>/dev/null||echo '暂无处置记录。';;version)/usr/bin/python3 /opt/vps-monitor/vps_monitor.py version;;delete-log)need_root;say "$R" '高危：将删除专用脚本进程日志，不影响处置审计和系统 journal。';ask "$R" '确认删除请输入大写 DELETE：';if [ "$REPLY" = DELETE ];then :>"$RUNTIME";say "$G" '脚本进程日志已清空。';else say "$R" '未授权，不删除。';fi;;uninstall)need_root;systemctl disable --now "$SERVICE"||true;rm -f /etc/systemd/system/vps-monitor.service /usr/local/bin/vps-monitorctl;rm -rf /opt/vps-monitor;systemctl daemon-reload;echo '程序已卸载；配置和数据保留。';;*)usage;exit 1;;esac
+usage(){ echo '命令：status|logs|show-config|configure|authorize-actions|disable-actions|test|restart|reports|actions|version|delete-log|uninstall';}
+case "${1:-}" in status)systemctl status "$SERVICE" --no-pager --full;;logs)tail -n "${2:-10}" "$RUNTIME" 2>/dev/null||echo '暂无脚本进程日志。';;show-config)show_config;;configure|config)configure;;authorize-actions)action_menu;;disable-actions)need_root;disable_all;chmod 600 "$CONFIG";systemctl restart "$SERVICE";say "$G" '全部自动处置已关闭。';;check)check;;test)load;/usr/bin/python3 /opt/vps-monitor/vps_monitor.py test-telegram;;restart)need_root;systemctl restart "$SERVICE";systemctl status "$SERVICE" --no-pager --full;;reports)ls -lht "$DATA/reports" 2>/dev/null||echo '暂无报告。';;actions)tail -n 20 "$DATA/actions.jsonl" 2>/dev/null||echo '暂无处置记录。';;version)/usr/bin/python3 /opt/vps-monitor/vps_monitor.py version;;delete-log)need_root;say "$R" '将删除专用脚本日志，不影响处置审计和系统 journal。';ask "$R" '输入 DELETE 确认：';if [ "$REPLY" = DELETE ];then :>"$RUNTIME";say "$G" '日志已清空。';else say "$R" '未授权。';fi;;uninstall)need_root;systemctl disable --now "$SERVICE"||true;rm -f /etc/systemd/system/vps-monitor.service /usr/local/bin/vps-monitorctl;rm -rf /opt/vps-monitor;systemctl daemon-reload;echo '程序已卸载；配置和数据保留。';;*)usage;exit 1;;esac
