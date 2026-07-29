@@ -9,8 +9,10 @@ case "${1:-}" in
  logs) journalctl -u "$SERVICE" -f ;;
  config) need_root; ${EDITOR:-nano} "$CONFIG"; systemctl restart "$SERVICE" ;;
  set) need_root; [ "$#" = 3 ] || { usage; exit 1; }; key=$2; val=$3; echo "$key" | grep -Eq '^[A-Z][A-Z0-9_]*$' || { echo '变量名无效'; exit 1; }; cp "$CONFIG" "$CONFIG.bak"; if grep -q "^${key}=" "$CONFIG"; then sed -i "s|^${key}=.*|${key}=${val}|" "$CONFIG"; else printf '\n%s=%s\n' "$key" "$val" >> "$CONFIG"; fi; chmod 600 "$CONFIG"; /usr/bin/python3 /opt/vps-monitor/vps_monitor.py check; systemctl restart "$SERVICE"; echo "已更新 $key 并重启（备份：$CONFIG.bak）" ;;
- check) set -a; . "$CONFIG"; set +a; /usr/bin/python3 /opt/vps-monitor/vps_monitor.py check ;;
- test) set -a; . "$CONFIG"; set +a; /usr/bin/python3 /opt/vps-monitor/vps_monitor.py test-telegram ;;
+ check) set -a; # shellcheck disable=SC1090
+ . "$CONFIG"; set +a; /usr/bin/python3 /opt/vps-monitor/vps_monitor.py check ;;
+ test) set -a; # shellcheck disable=SC1090
+ . "$CONFIG"; set +a; /usr/bin/python3 /opt/vps-monitor/vps_monitor.py test-telegram ;;
  restart) need_root; systemctl restart "$SERVICE"; systemctl status "$SERVICE" --no-pager ;;
  reports) ls -lht /var/lib/vps-monitor/reports 2>/dev/null || true ;;
  version) /usr/bin/python3 /opt/vps-monitor/vps_monitor.py version ;;

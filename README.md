@@ -40,15 +40,53 @@
 
 ## 推荐：原生一键安装
 
-下载固定 Release，校验 SHA-256 后：
+安装和升级的下载目录始终固定为 `vps-monitor`，不会把版本号写进目录。程序安装到 `/opt/vps-monitor`，配置保存在 `/etc/vps-monitor.env`，数据保存在 `/var/lib/vps-monitor`；以后升级不会改变路径，也不会覆盖配置和历史数据。
+
+### 方法一：使用 curl（完整复制到 VPS）
 
 ```bash
-unzip vps-monitor-2.0.0.zip
-cd vps-monitor-2.0.0
+cd "$HOME" && \
+rm -rf vps-monitor vps-monitor.zip SHA256SUMS && \
+curl -fL --retry 3 -o vps-monitor.zip \
+  https://github.com/onshine/vps-monitor/releases/latest/download/vps-monitor.zip && \
+curl -fL --retry 3 -o SHA256SUMS \
+  https://github.com/onshine/vps-monitor/releases/latest/download/SHA256SUMS && \
+sha256sum -c SHA256SUMS && \
+mkdir -p vps-monitor && \
+unzip -q vps-monitor.zip -d vps-monitor && \
+cd vps-monitor && \
 sudo ./install.sh
 ```
 
-安装器支持 Debian/Ubuntu、Alpine、RHEL/Fedora 系列，会询问 BASIC/FULL；FULL 必须输入 `YES`。配置：
+若 VPS 没有 `curl` 或 `unzip`：
+
+```bash
+sudo apt-get update && sudo apt-get install -y curl unzip
+```
+
+### 方法二：使用 wget（完整复制到 VPS）
+
+```bash
+cd "$HOME" && \
+rm -rf vps-monitor vps-monitor.zip SHA256SUMS && \
+wget -O vps-monitor.zip \
+  https://github.com/onshine/vps-monitor/releases/latest/download/vps-monitor.zip && \
+wget -O SHA256SUMS \
+  https://github.com/onshine/vps-monitor/releases/latest/download/SHA256SUMS && \
+sha256sum -c SHA256SUMS && \
+mkdir -p vps-monitor && \
+unzip -q vps-monitor.zip -d vps-monitor && \
+cd vps-monitor && \
+sudo ./install.sh
+```
+
+若 VPS 没有 `wget` 或 `unzip`：
+
+```bash
+sudo apt-get update && sudo apt-get install -y wget unzip
+```
+
+安装器支持 Debian/Ubuntu、Alpine、RHEL/Fedora 系列。首次安装会询问 BASIC/FULL；FULL 必须输入大写 `YES`。安装完成后配置 Telegram：
 
 ```bash
 sudo vps-monitorctl config
@@ -56,7 +94,26 @@ sudo vps-monitorctl test
 sudo vps-monitorctl status
 ```
 
-> 不建议直接 `curl | sh`。固定版本、检查 SHA-256、查看安装脚本后再运行更安全。
+### 一条命令下载并安装
+
+如果你接受直接执行仓库安装器，可使用：
+
+```bash
+bash <(curl -fsSL https://raw.githubusercontent.com/onshine/vps-monitor/main/quick-install.sh)
+```
+
+该引导脚本会把 Release 下载到用户家目录下固定的 `vps-monitor` 工作目录、验证 SHA-256，再调用交互式 `install.sh`。正式程序始终安装到 `/opt/vps-monitor`。生产服务器更推荐使用上面的完整 curl/wget 流程，以便先检查下载内容。
+
+### 升级
+
+升级时重新执行上面的 curl 或 wget 完整流程即可。下载工作目录始终是 `$HOME/vps-monitor`，正式程序目录始终是 `/opt/vps-monitor`；安装器检测到 `/etc/vps-monitor.env` 后自动进入升级模式：
+
+- 保留 `/etc/vps-monitor.env` 和既有 BASIC/FULL 授权；
+- 保留 `/var/lib/vps-monitor` 中的报告及指标；
+- 替换程序、管理命令和 systemd 服务；
+- 检查配置后重启服务。
+
+版本号只用于 GitHub Tag/Release 和程序内部版本，不作为 VPS 的长期目录名。
 
 ## Docker（默认 BASIC）
 

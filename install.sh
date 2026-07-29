@@ -1,8 +1,13 @@
 #!/bin/sh
 set -eu
-ROOT=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+ROOT=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
 [ "$(id -u)" = 0 ] || { echo '错误：请使用 sudo ./install.sh'; exit 1; }
-cat <<'EOF'
+MODE=basic; CONSENT=NO
+if [ -f /etc/vps-monitor.env ]; then
+ echo '检测到已有安装：进入安全升级模式。'
+ echo '将替换程序和服务文件，但保留 /etc/vps-monitor.env、既有权限授权和 /var/lib/vps-monitor 数据。'
+else
+ cat <<'EOF'
 VPS Sentinel 安装器
 
 请选择权限模式：
@@ -13,15 +18,15 @@ FULL 模式风险：root 程序若被篡改可危及整机；命令、文件路�
 脚本明确不会读取 /proc/PID/environ、文件内容、SSH 密钥，也不会自动 kill、删文件或封禁。
 详见 SECURITY.md。
 EOF
-printf '选择 [1/2，默认 1]: '; read -r choice
-MODE=basic; CONSENT=NO
-if [ "${choice:-1}" = 2 ]; then
- cat "$ROOT/SECURITY.md" 2>/dev/null || true
- echo
- echo '若你已理解并接受以上高危权限，请输入大写 YES。其他输入均取消安装。'
- printf '确认: '; read -r answer
- [ "$answer" = YES ] || { echo '未授权，安装已取消。'; exit 2; }
- MODE=full; CONSENT=YES
+ printf '选择 [1/2，默认 1]: '; read -r choice
+ if [ "${choice:-1}" = 2 ]; then
+  cat "$ROOT/SECURITY.md" 2>/dev/null || true
+  echo
+  echo '若你已理解并接受以上高危权限，请输入大写 YES。其他输入均取消安装。'
+  printf '确认: '; read -r answer
+  [ "$answer" = YES ] || { echo '未授权，安装已取消。'; exit 2; }
+  MODE=full; CONSENT=YES
+ fi
 fi
 if command -v apt-get >/dev/null; then
  command -v python3 >/dev/null || { apt-get update; apt-get install -y python3; }
@@ -46,8 +51,12 @@ chown -R root:root /opt/vps-monitor /var/lib/vps-monitor /etc/vps-monitor.env
 chmod 0600 /etc/vps-monitor.env
 systemctl daemon-reload
 systemctl enable vps-monitor.service
-set -a; . /etc/vps-monitor.env; set +a
+set -a
+# shellcheck disable=SC1091
+. /etc/vps-monitor.env
+set +a
 /usr/bin/python3 /opt/vps-monitor/vps_monitor.py check
+systemctl restart vps-monitor.service
 echo
 echo '安装完成。请执行：sudo vps-monitorctl config，填写 Telegram 配置并自动重启。'
 echo '测试通知：sudo vps-monitorctl test'
