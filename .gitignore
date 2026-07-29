@@ -1,0 +1,11 @@
+.env
+*.env
+!vps-monitor.env.example
+data/
+reports/
+metrics/
+__pycache__/
+*.py[cod]
+*.log
+*.txt
+.DS_Store

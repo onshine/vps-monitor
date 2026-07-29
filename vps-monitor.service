@@ -1,0 +1,46 @@
+[Unit]
+Description=VPS Sentinel resource and disk I/O forensics monitor
+Documentation=https://github.com/onshine/vps-monitor
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+EnvironmentFile=-/etc/vps-monitor.env
+ExecStart=/usr/bin/python3 /opt/vps-monitor/vps_monitor.py run
+ExecStartPre=/usr/bin/python3 /opt/vps-monitor/vps_monitor.py check
+Restart=on-failure
+RestartSec=10
+TimeoutStopSec=20
+
+# 2GB VPS 安全预算：通常 RSS 约 15–30MB，硬上限 96MB；CPU 最多 20% 单核。
+MemoryHigh=64M
+MemoryMax=96M
+MemorySwapMax=32M
+CPUQuota=20%
+TasksMax=32
+LimitNOFILE=1024
+OOMScoreAdjust=500
+Nice=10
+IOSchedulingClass=idle
+
+# root 用于读取宿主机其他 PID 的 /proc/fd、端口与系统日志。
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectHome=read-only
+ProtectSystem=strict
+ReadWritePaths=/var/lib/vps-monitor
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+RestrictRealtime=yes
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=vps-sentinel
+
+[Install]
+WantedBy=multi-user.target

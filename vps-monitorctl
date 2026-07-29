@@ -1,0 +1,19 @@
+#!/bin/sh
+set -eu
+SERVICE=vps-monitor
+CONFIG=/etc/vps-monitor.env
+usage(){ echo '用法: vps-monitorctl {status|logs|config|set KEY VALUE|check|test|restart|reports|version|uninstall}'; }
+need_root(){ [ "$(id -u)" = 0 ] || { echo '请使用 sudo'; exit 1; }; }
+case "${1:-}" in
+ status) systemctl status "$SERVICE" --no-pager ;;
+ logs) journalctl -u "$SERVICE" -f ;;
+ config) need_root; ${EDITOR:-nano} "$CONFIG"; systemctl restart "$SERVICE" ;;
+ set) need_root; [ "$#" = 3 ] || { usage; exit 1; }; key=$2; val=$3; echo "$key" | grep -Eq '^[A-Z][A-Z0-9_]*$' || { echo '变量名无效'; exit 1; }; cp "$CONFIG" "$CONFIG.bak"; if grep -q "^${key}=" "$CONFIG"; then sed -i "s|^${key}=.*|${key}=${val}|" "$CONFIG"; else printf '\n%s=%s\n' "$key" "$val" >> "$CONFIG"; fi; chmod 600 "$CONFIG"; /usr/bin/python3 /opt/vps-monitor/vps_monitor.py check; systemctl restart "$SERVICE"; echo "已更新 $key 并重启（备份：$CONFIG.bak）" ;;
+ check) set -a; . "$CONFIG"; set +a; /usr/bin/python3 /opt/vps-monitor/vps_monitor.py check ;;
+ test) set -a; . "$CONFIG"; set +a; /usr/bin/python3 /opt/vps-monitor/vps_monitor.py test-telegram ;;
+ restart) need_root; systemctl restart "$SERVICE"; systemctl status "$SERVICE" --no-pager ;;
+ reports) ls -lht /var/lib/vps-monitor/reports 2>/dev/null || true ;;
+ version) /usr/bin/python3 /opt/vps-monitor/vps_monitor.py version ;;
+ uninstall) need_root; systemctl disable --now "$SERVICE" || true; rm -f /etc/systemd/system/vps-monitor.service /usr/local/bin/vps-monitorctl; rm -rf /opt/vps-monitor; systemctl daemon-reload; echo '程序已卸载。配置 /etc/vps-monitor.env 与数据 /var/lib/vps-monitor 已保留，请按需手动删除。' ;;
+ *) usage; exit 1 ;;
+esac

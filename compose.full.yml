@@ -1,0 +1,21 @@
+# 高危完整取证 Docker 覆盖文件
+# 使用前必须阅读 SECURITY.md，并在 .env 设置：
+# FORENSICS_MODE=full
+# FORENSICS_CONSENT=YES
+# 启动时必须手工执行：docker compose -f compose.yml -f compose.full.yml up -d
+#
+# 风险：privileged、host PID/network、Docker socket 均会显著削弱容器隔离；Docker socket 等价宿主机 root。
+services:
+  vps-monitor:
+    pid: host
+    network_mode: host
+    privileged: true
+    read_only: true
+    volumes:
+      - ./data:/data
+      - /proc:/proc:ro
+      - /sys:/sys:ro
+      - /:/host:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - /var/log/journal:/var/log/journal:ro
+      - /run/log/journal:/run/log/journal:ro
