@@ -5,7 +5,7 @@ from collections import deque
 from datetime import datetime
 from pathlib import Path
 
-VERSION="2.3.1"
+VERSION="2.3.2"
 def env(name,default,cast=str):
  try:return cast(os.getenv(name,str(default)))
  except:return default
@@ -315,7 +315,29 @@ def config_check():
   if not any((AUTO_CPU,AUTO_MEM,AUTO_READ,AUTO_WRITE)):errors.append("自动处置至少授权一种异常类别")
   if not TOKEN or not CHAT:errors.append("自动处置必须配置 Telegram，确保每次动作可通知")
  if AUTO_KILL and not AUTO_KILL_CONSENT:errors.append("启用 SIGKILL 必须单独设置 AUTO_ACTION_SIGKILL_CONSENT=YES")
- print(f"VPS Sentinel {VERSION}\nHost: {HOST}\nData: {DATA}\nMode: {MODE}; explicit consent: {'yes' if CONSENT else 'no'}\nAuto action: {AUTO_ACTION}; consent: {'yes' if AUTO_CONSENT else 'no'}; categories: CPU={AUTO_CPU} MEM={AUTO_MEM} READ={AUTO_READ} WRITE={AUTO_WRITE}; SIGKILL={AUTO_KILL and AUTO_KILL_CONSENT}\nSelf budget: RSS={human(SELF_RSS_MAX)} report={human(MAX_REPORT)} sample_timeout={SAMPLE_TIMEOUT}s\nInterval: {INTERVAL}s; process scan: {PROC_INTERVAL}s\nThresholds: CPU={CPU_LIMIT}% MEM={MEM_LIMIT}% SWAP={SWAP_LIMIT}% IO={IO_LIMIT}% FS={FS_LIMIT}%\nTelegram: {'configured' if TOKEN and CHAT else 'not configured'}")
+ print(f"VPS Monitor {VERSION}")
+ print(f"主机：{HOST}")
+ print(f"数据目录：{DATA}")
+ print(f"取证模式：{MODE}")
+ print(f"FULL 授权：{'是' if CONSENT else '否'}")
+ print(f"自动处置：{AUTO_ACTION}")
+ print(f"自动处置授权：{'是' if AUTO_CONSENT else '否'}")
+ print(f"CPU 自动处置：{'是' if AUTO_CPU else '否'}")
+ print(f"内存自动处置：{'是' if AUTO_MEM else '否'}")
+ print(f"磁盘读取自动处置：{'是' if AUTO_READ else '否'}")
+ print(f"磁盘写入自动处置：{'是' if AUTO_WRITE else '否'}")
+ print(f"SIGKILL：{'是' if AUTO_KILL and AUTO_KILL_CONSENT else '否'}")
+ print(f"RSS 退出线：{human(SELF_RSS_MAX)}")
+ print(f"报告上限：{human(MAX_REPORT)}")
+ print(f"采样超时线：{SAMPLE_TIMEOUT} 秒")
+ print(f"整机采样间隔：{INTERVAL} 秒")
+ print(f"进程采样间隔：{PROC_INTERVAL} 秒")
+ print(f"CPU 阈值：{CPU_LIMIT}%")
+ print(f"内存阈值：{MEM_LIMIT}%")
+ print(f"Swap 阈值：{SWAP_LIMIT}%")
+ print(f"磁盘 I/O 阈值：{IO_LIMIT}%")
+ print(f"磁盘空间阈值：{FS_LIMIT}%")
+ print(f"Telegram：{'已配置' if TOKEN and CHAT else '未配置'}")
  if errors:
   print("ERROR: "+"; ".join(errors),file=sys.stderr);return 1
  return 0

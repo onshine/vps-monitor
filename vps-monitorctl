@@ -13,7 +13,36 @@ mask(){ v=$1;[ -z "$v" ]&&{ printf '未配置';return;};if [ ${#v} -le 8 ];then 
 yn(){ [ "${1:-false}" = true ]&&printf '已授权' || printf '未授权';}
 pause_back(){ ask "$G" '按回车或输入 F 返回上一级；输入 0 退出：';[ "$REPLY" = 0 ]&&return 20;return 0;}
 check(){ load;/usr/bin/python3 /opt/vps-monitor/vps_monitor.py check;}
-show_config(){ load;printf '\n';say "$G" '========== Telegram 通知 ==========';printf 'Bot Token：%s\n' "$(mask "${TG_BOT_TOKEN:-}")";printf 'Chat ID：%s\n' "${TG_CHAT_ID:-未配置}";printf '群组话题 ID：%s\n' "${TG_MESSAGE_THREAD_ID:-未配置}";printf '通知方式：%s\n' "$([ "${TG_DISABLE_NOTIFICATION:-false}" = true ]&&echo 静默||echo 声音/振动)";say "$G" '---------- 监控阈值 ----------';printf 'CPU：%s%%｜内存：%s%%｜Swap：%s%%\n' "${CPU_THRESHOLD:-90}" "${MEMORY_THRESHOLD:-90}" "${SWAP_THRESHOLD:-90}";printf '磁盘 I/O：%s%%｜空间：%s%%｜inode：%s%%\n' "${DISK_IO_THRESHOLD:-90}" "${DISK_SPACE_THRESHOLD:-90}" "${INODE_THRESHOLD:-90}";say "$Y" '---------- 取证权限 ----------';printf '模式：%s｜FULL授权：%s\n' "${FORENSICS_MODE:-basic}" "${FORENSICS_CONSENT:-NO}";say "$R" '---------- 自动处置权限 ----------';printf '总开关：%s｜授权：%s\n' "${AUTO_ACTION:-none}" "${AUTO_ACTION_CONSENT:-NO}";printf 'CPU：%s｜内存：%s\n' "$(yn "${AUTO_ACTION_CPU:-false}")" "$(yn "${AUTO_ACTION_MEMORY:-false}")";printf '磁盘读：%s｜磁盘写：%s\n' "$(yn "${AUTO_ACTION_DISK_READ:-false}")" "$(yn "${AUTO_ACTION_DISK_WRITE:-false}")";printf 'SIGKILL：%s\n' "$(yn "${AUTO_ACTION_ALLOW_SIGKILL:-false}")";say "$G" '---------- 自身资源限制 ----------';printf 'RSS退出线：%sMiB｜报告上限：%sMiB\n' "${SELF_RSS_MAX_MB:-80}" "${MAX_REPORT_SIZE_MB:-5}";}
+show_config(){
+ load;printf '\n'
+ say "$G" '========== Telegram 通知 =========='
+ printf 'Bot Token：%s\n' "$(mask "${TG_BOT_TOKEN:-}")"
+ printf 'Chat ID：%s\n' "${TG_CHAT_ID:-未配置}"
+ printf '群组话题 ID：%s\n' "${TG_MESSAGE_THREAD_ID:-未配置}"
+ printf '通知方式：%s\n' "$([ "${TG_DISABLE_NOTIFICATION:-false}" = true ]&&echo 静默||echo 声音/振动)"
+ say "$G" '---------- 监控阈值 ----------'
+ printf 'CPU 阈值：%s%%\n' "${CPU_THRESHOLD:-90}"
+ printf '内存阈值：%s%%\n' "${MEMORY_THRESHOLD:-90}"
+ printf 'Swap 阈值：%s%%\n' "${SWAP_THRESHOLD:-90}"
+ printf '磁盘 I/O 阈值：%s%%\n' "${DISK_IO_THRESHOLD:-90}"
+ printf '磁盘空间阈值：%s%%\n' "${DISK_SPACE_THRESHOLD:-90}"
+ printf 'inode 阈值：%s%%\n' "${INODE_THRESHOLD:-90}"
+ say "$Y" '---------- 取证权限 ----------'
+ printf '取证模式：%s\n' "${FORENSICS_MODE:-basic}"
+ printf 'FULL 授权：%s\n' "${FORENSICS_CONSENT:-NO}"
+ say "$R" '---------- 自动处置权限 ----------'
+ printf '自动处置总开关：%s\n' "${AUTO_ACTION:-none}"
+ printf '自动处置总授权：%s\n' "${AUTO_ACTION_CONSENT:-NO}"
+ printf 'CPU 自动处置：%s\n' "$(yn "${AUTO_ACTION_CPU:-false}")"
+ printf '内存自动处置：%s\n' "$(yn "${AUTO_ACTION_MEMORY:-false}")"
+ printf '磁盘读取自动处置：%s\n' "$(yn "${AUTO_ACTION_DISK_READ:-false}")"
+ printf '磁盘写入自动处置：%s\n' "$(yn "${AUTO_ACTION_DISK_WRITE:-false}")"
+ printf 'SIGKILL 强杀：%s\n' "$(yn "${AUTO_ACTION_ALLOW_SIGKILL:-false}")"
+ say "$G" '---------- 自身资源限制 ----------'
+ printf 'RSS 主动退出线：%s MiB\n' "${SELF_RSS_MAX_MB:-80}"
+ printf '单份报告上限：%s MiB\n' "${MAX_REPORT_SIZE_MB:-5}"
+ printf '采样超时警告线：%s 秒\n' "${SELF_SAMPLE_TIMEOUT:-30}"
+}
 disable_all(){ setval AUTO_ACTION none;setval AUTO_ACTION_CONSENT NO;setval AUTO_ACTION_CPU false;setval AUTO_ACTION_MEMORY false;setval AUTO_ACTION_DISK_READ false;setval AUTO_ACTION_DISK_WRITE false;setval AUTO_ACTION_ALLOW_SIGKILL false;setval AUTO_ACTION_SIGKILL_CONSENT NO;}
 enable_standard(){ setval FORENSICS_MODE full;setval FORENSICS_CONSENT YES;setval AUTO_ACTION terminate;setval AUTO_ACTION_CONSENT YES;setval AUTO_ACTION_CPU true;setval AUTO_ACTION_MEMORY true;setval AUTO_ACTION_DISK_READ true;setval AUTO_ACTION_DISK_WRITE true;setval AUTO_ACTION_ALLOW_SIGKILL false;setval AUTO_ACTION_SIGKILL_CONSENT NO;}
 action_menu(){ need_root
