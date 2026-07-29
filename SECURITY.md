@@ -61,13 +61,13 @@ systemd 默认：
 
 - `MemoryHigh=64M`、`MemoryMax=96M`、`MemorySwapMax=32M`
 - `CPUQuota=20%`：最多使用单个 CPU 核心的 20%
-- `TasksMax=32`、`LimitNOFILE=1024`
+- `TasksMax=8`、`LimitNOFILE=1024`
 - `Nice=10`、`IOSchedulingClass=idle`：让业务进程优先
 - 只允许写 `/var/lib/vps-monitor`
 - `NoNewPrivileges=yes`、只读系统目录、禁止改内核参数/模块/cgroup
 - `Restart=on-failure` 且有重启等待，避免紧密崩溃循环
 
-Docker 默认：96 MiB 内存、0.20 CPU、32 PID，并设置 `no-new-privileges`。但 **privileged 容器会削弱部分安全选项**，所以安全性仍低于原生 systemd。
+Docker 默认：96 MiB 内存、0.20 CPU、8 tasks，并设置 `no-new-privileges`。但 **privileged 容器会削弱部分安全选项**，所以安全性仍低于原生 systemd。
 
 ### 程序内部自审查
 

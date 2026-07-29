@@ -5,7 +5,7 @@ from collections import deque
 from datetime import datetime
 from pathlib import Path
 
-VERSION="2.0.3"
+VERSION="2.1.0"
 def env(name,default,cast=str):
  try:return cast(os.getenv(name,str(default)))
  except:return default
@@ -70,21 +70,30 @@ def procs_raw():
    v=proc_one(name)
    if v:out[int(name)]=v
  return out
+def mounts():
+ rows=[];seen=set()
+ for line in text("/proc/self/mountinfo",1048576).splitlines():
+  try:
+   left,right=line.split(" - ",1); a=left.split(); b=right.split(); mount=a[4].replace("\\040"," "); fstype=b[0]; source=b[1]
+   if mount in seen or fstype in ("tmpfs","devtmpfs","proc","sysfs","cgroup","cgroup2","overlay"):continue
+   seen.add(mount);rows.append((source,fstype,mount))
+  except:pass
+ return rows
 def fs_usage():
  rows=[]
- try:
-  for line in command(["df","-PT","-x","tmpfs","-x","devtmpfs"]).splitlines()[1:]:
-   p=line.split()
-   if len(p)>=7:rows.append({"source":p[0],"type":p[1],"used":float(p[5][:-1]),"mount":" ".join(p[6:])})
- except:pass
+ for source,fstype,mount in mounts():
+  try:
+   s=os.statvfs(mount); total=s.f_blocks*s.f_frsize; avail=s.f_bavail*s.f_frsize
+   if total:rows.append({"source":source,"type":fstype,"used":100*(total-avail)/total,"mount":mount})
+  except:pass
  return rows
 def inode_usage():
  rows=[]
- try:
-  for line in command(["df","-Pi","-x","tmpfs","-x","devtmpfs"]).splitlines()[1:]:
-   p=line.split()
-   if len(p)>=6 and p[4]!="-":rows.append({"source":p[0],"used":float(p[4][:-1]),"mount":" ".join(p[5:])})
- except:pass
+ for source,_,mount in mounts():
+  try:
+   s=os.statvfs(mount)
+   if s.f_files:rows.append({"source":source,"used":100*(s.f_files-s.f_favail)/s.f_files,"mount":mount})
+  except:pass
  return rows
 def human(n):
  for u in ("B","KiB","MiB","GiB","TiB"):

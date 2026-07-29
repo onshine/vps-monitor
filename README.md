@@ -4,7 +4,7 @@
 
 - **零 Python 第三方依赖**：Python 3 标准库，直接读 Linux `/proc`、`/sys`
 - **低开销**：常驻只采样计数器，重型取证仅在确认异常后运行
-- **防止监控拖垮 2GB VPS**：systemd/Docker 96MiB 内存、0.20 CPU、32 PID 硬限制；内部 RSS/报告/超时自审查
+- **防止监控拖垮 2GB VPS**：正常常驻仅 1 个进程、1 个线程，日常采样不启动子进程；systemd/Docker 96MiB 内存、0.20 CPU、8 tasks 硬限制；内部 RSS/报告/超时自审查
 - **权限透明**：默认 BASIC 低权限；FULL 必须阅读风险并手输大写 `YES`
 - **Telegram**：摘要 + 完整 TXT 附件；冷却、恢复通知、论坛 Topic
 - **证据可留存**：报告和 JSONL 指标保存在本地，有天数及文件数上限
@@ -21,7 +21,7 @@
 
 - Python 3 标准库：采样、阈值、报告、Telegram HTTPS
 - Linux `/proc`、`/sys`、PSI：CPU、内存、进程 I/O、块设备忙碌时间
-- 可选系统工具：`procps`、`iproute2`、`sysstat`、`util-linux`
+- 可选系统工具：`procps`、`iproute2`、`util-linux`（仅 FULL 异常取证增强；不安装 `sysstat`，避免附带 timer/service）
 - systemd：推荐生产部署、资源 cgroup 限制、安全沙箱
 - Docker / Compose：BASIC 便捷部署；FULL 需要显式高权限覆盖文件
 - GitHub Actions：语法、基础测试、镜像构建
@@ -124,7 +124,7 @@ docker compose up -d --build
 docker compose logs -f
 ```
 
-默认容器：只读根文件系统、drop 全部 capabilities、no-new-privileges、96MiB/0.20 CPU/32 PID。由于容器看到的是自身 `/proc`，BASIC 适合整机 cgroup/挂载可见范围监控，宿主机完整 PID 归因不如原生方式。
+默认容器：只读根文件系统、drop 全部 capabilities、no-new-privileges、96MiB/0.20 CPU/8 tasks。由于容器看到的是自身 `/proc`，BASIC 适合整机 cgroup/挂载可见范围监控，宿主机完整 PID 归因不如原生方式。
 
 Docker FULL 高危模式：
 
@@ -246,7 +246,9 @@ sudo vps-monitorctl uninstall
 
 ## 2GB 内存 + 1GB Swap 建议
 
-默认设置通常 RSS 约 15–30MiB（进程数量和故障报告会影响），不是预留或持续占用 96MiB。96MiB 是 cgroup 硬上限；64MiB 开始施压，Swap 最多 32MiB，CPU 最多单核 20%。I/O 调度为 idle、nice=10。程序内部超过 80MiB 会主动退出，且报告、命令输出、fd 和历史都有上限。
+默认设置通常 RSS 约 15–30MiB（进程数量和故障报告会影响），正常常驻只有 1 个 Python 进程和 1 个线程，日常采样直接读取 `/proc`、`/sys` 并使用 `statvfs`，不会每 5 秒创建 `df`/`iostat` 等子进程。只有确认异常后才限时运行少量取证命令。96MiB 是 cgroup 硬上限；64MiB 开始施压，Swap 最多 32MiB，CPU 最多单核 20%，tasks 上限 8。I/O 调度为 idle、nice=10。程序内部超过 80MiB 会主动退出，且报告、命令输出、fd 和历史都有上限。
+
+> v2.0.3 及更早安装器曾把 `sysstat/iostat` 作为依赖，Debian 可能随之启用 `sysstat-collect.timer`、`sysstat-rotate.timer`、`sysstat-summary.timer` 和 `sysstat.service`。这些不是 VPS Monitor 创建的监控进程，v2.1.0 起不再安装 sysstat。若确认服务器原先没有使用 sysstat，可执行 `sudo systemctl disable --now sysstat.service sysstat-collect.timer sysstat-rotate.timer sysstat-summary.timer`；是否卸载 `sysstat` 请由管理员自行决定。
 
 ## 局限
 
