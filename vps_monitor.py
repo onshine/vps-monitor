@@ -5,7 +5,7 @@ from collections import deque
 from datetime import datetime
 from pathlib import Path
 
-VERSION="2.4.0"
+VERSION="2.4.1"
 def env(name,default,cast=str):
  try:return cast(os.getenv(name,str(default)))
  except:return default
@@ -24,7 +24,9 @@ AUTO_READ=os.getenv("AUTO_ACTION_DISK_READ","false").lower() in ("1","true","yes
 AUTO_KILL=os.getenv("AUTO_ACTION_ALLOW_SIGKILL","false").lower() in ("1","true","yes"); AUTO_KILL_CONSENT=os.getenv("AUTO_ACTION_SIGKILL_CONSENT","NO") == "YES"
 ACTION_CONSEC=max(2,env("AUTO_ACTION_CONSECUTIVE",3,int)); ACTION_GRACE=max(3,env("AUTO_ACTION_GRACE_SECONDS",10,int)); ACTION_HOURLY=max(1,env("AUTO_ACTION_MAX_PER_HOUR",3,int))
 PROC_CPU_MIN=max(1,env("AUTO_ACTION_PROCESS_CPU_MIN",70,float)); PROC_MEM_MIN=max(1,env("AUTO_ACTION_PROCESS_MEMORY_MIN",25,float)); PROC_READ_MIN=max(1,env("AUTO_ACTION_PROCESS_READ_MBPS_MIN",10,float))*1048576; PROC_WRITE_MIN=max(1,env("AUTO_ACTION_PROCESS_WRITE_MBPS_MIN",10,float))*1048576
-PROTECTED={x.strip() for x in os.getenv("AUTO_ACTION_PROTECTED_NAMES","systemd,sshd,ssh,init,kthreadd,kworker,rcu_sched,systemd-journal,systemd-udevd,dbus-daemon,cron,containerd,dockerd,mysqld,mariadbd,postgres,redis-server,mongod").split(",") if x.strip()}; ACTION_LOG=DATA/"actions.jsonl"; ACTION_LOG_WARN=100*1048576
+PROTECTED={x.strip() for x in os.getenv("AUTO_ACTION_PROTECTED_NAMES","systemd,sshd,ssh,init,kthreadd,kworker,rcu_sched,systemd-journal,systemd-udevd,dbus-daemon,cron,containerd,dockerd,mysqld,mariadbd,postgres,redis-server,mongod").split(",") if x.strip()}
+PROTECTED_CMD=[x.strip().lower() for x in os.getenv("AUTO_ACTION_PROTECTED_CMDLINE","vite build,npm run build,npm install,yarn build,yarn install,pnpm build,pnpm install,webpack,rollup,esbuild,tsc,next build,nuxt build,cargo build,go build,mvn ,gradle,make ,cmake,gcc ,g++ ,rustc,pip install,poetry install,composer install,bundle install,docker build,apt-get,apt ,dnf ,yum ,dpkg,rsync,tar ,unzip,7z,borg,restic,duplicity,mysqldump,pg_dump").split(",") if x.strip()]
+ACTION_LOG=DATA/"actions.jsonl"; ACTION_LOG_WARN=100*1048576
 PAGE=os.sysconf("SC_PAGE_SIZE"); CLK=os.sysconf(os.sysconf_names["SC_CLK_TCK"]); SELF=os.getpid()
 MODE=os.getenv("FORENSICS_MODE","basic").lower(); CONSENT=os.getenv("FORENSICS_CONSENT","") == "YES"; FULL=MODE == "full" and CONSENT
 SELF_RSS_MAX=max(32,env("SELF_RSS_MAX_MB",80,int))*1048576; MAX_REPORT=max(1,env("MAX_REPORT_SIZE_MB",5,int))*1048576; SAMPLE_TIMEOUT=max(5,env("SELF_SAMPLE_TIMEOUT",30,float))
@@ -208,7 +210,8 @@ def proc_alive(pid,start):
  v=proc_one(pid);return bool(v and v[0]==start)
 def protected(p):
  if p["pid"] in (0,1,SELF) or not p.get("cmd"):return True
- name=p.get("comm","");exe=os.path.basename(p.get("exe","")).strip()
+ name=p.get("comm","");exe=os.path.basename(p.get("exe","")).strip();cmd=p.get("cmd","").lower()
+ if any(k in cmd for k in PROTECTED_CMD):return True
  return name in PROTECTED or exe in PROTECTED or any(name.startswith(x) for x in ("kworker","migration","watchdog","rcu_","ksoftirqd"))
 def action_candidate(s,rs):
  if AUTO_ACTION=="none" or not AUTO_CONSENT or not FULL:return None,None

@@ -38,6 +38,9 @@ show_config(){
  printf '磁盘读取自动处置：%s\n' "$(yn "${AUTO_ACTION_DISK_READ:-false}")"
  printf '磁盘写入自动处置：%s\n' "$(yn "${AUTO_ACTION_DISK_WRITE:-false}")"
  printf 'SIGKILL 强杀：%s\n' "$(yn "${AUTO_ACTION_ALLOW_SIGKILL:-false}")"
+ say "$G" '---------- 自动处置豁免名单 ----------'
+ printf '受保护程序名：%s\n' "${AUTO_ACTION_PROTECTED_NAMES:-默认系统与数据库}"
+ printf '受保护命令关键字：%s\n' "${AUTO_ACTION_PROTECTED_CMDLINE:-默认构建与维护任务}"
  say "$G" '---------- 自身资源限制 ----------'
  printf 'RSS 主动退出线：%s MiB\n' "${SELF_RSS_MAX_MB:-80}"
  printf '单份报告上限：%s MiB\n' "${MAX_REPORT_SIZE_MB:-5}"
@@ -46,13 +49,14 @@ show_config(){
 disable_all(){ setval AUTO_ACTION none;setval AUTO_ACTION_CONSENT NO;setval AUTO_ACTION_CPU false;setval AUTO_ACTION_MEMORY false;setval AUTO_ACTION_DISK_READ false;setval AUTO_ACTION_DISK_WRITE false;setval AUTO_ACTION_ALLOW_SIGKILL false;setval AUTO_ACTION_SIGKILL_CONSENT NO;}
 enable_standard(){ setval FORENSICS_MODE full;setval FORENSICS_CONSENT YES;setval AUTO_ACTION terminate;setval AUTO_ACTION_CONSENT YES;setval AUTO_ACTION_CPU true;setval AUTO_ACTION_MEMORY true;setval AUTO_ACTION_DISK_READ true;setval AUTO_ACTION_DISK_WRITE true;setval AUTO_ACTION_ALLOW_SIGKILL false;setval AUTO_ACTION_SIGKILL_CONSENT NO;}
 action_menu(){ need_root
- while :;do load;printf '\n';say "$R" '自动处置权限（高危）';say "$G" '1. 查看当前自动处置权限';say "$R" '2. 一键开启全部标准授权（FULL + 四类 + SIGTERM）';say "$R" '3. 单独授权或取消各资源类别';say "$R" '4. 单独授权 SIGKILL';say "$G" '5. 一键关闭全部自动处置授权';say "$G" 'F. 返回上一级菜单';say "$G" '0. 退出脚本';ask "$G" '请选择：'
+ while :;do load;printf '\n';say "$R" '自动处置权限（高危）';say "$G" '1. 查看当前自动处置权限';say "$R" '2. 一键开启全部标准授权（FULL + 四类 + SIGTERM）';say "$R" '3. 单独授权或取消各资源类别';say "$R" '4. 单独授权 SIGKILL';say "$G" '5. 一键关闭全部自动处置授权';say "$G" '6. 管理构建任务豁免名单';say "$G" 'F. 返回上一级菜单';say "$G" '0. 退出脚本';ask "$G" '请选择：'
   case "$REPLY" in
    1)show_config;pause_back||return 20;;
    2)if [ -z "${TG_BOT_TOKEN:-}" ]||[ -z "${TG_CHAT_ID:-}" ];then say "$R" '禁止：请先配置并测试 Telegram。';else say "$R" '将开启 FULL 取证及 CPU/内存/磁盘读写 SIGTERM 自动处置。';say "$Y" '不会开启 SIGKILL；数据库、SSH 和系统进程仍受保护。';ask "$R" '同意请输入大写 YES：';if [ "$REPLY" = YES ];then enable_standard;chmod 600 "$CONFIG";check&&systemctl restart "$SERVICE";say "$R" '全部标准授权已开启。';else say "$R" '未授权，不修改。';fi;fi;;
    3)if [ "${FORENSICS_MODE:-basic}" != full ];then say "$R" '请先选择 2 开启 FULL 与标准授权，再逐项关闭。';else ask "$Y" 'CPU处置 [y/N]：';case "$REPLY" in y|Y)setval AUTO_ACTION_CPU true;;*)setval AUTO_ACTION_CPU false;;esac;ask "$Y" '内存处置 [y/N]：';case "$REPLY" in y|Y)setval AUTO_ACTION_MEMORY true;;*)setval AUTO_ACTION_MEMORY false;;esac;ask "$Y" '磁盘读取处置 [y/N]：';case "$REPLY" in y|Y)setval AUTO_ACTION_DISK_READ true;;*)setval AUTO_ACTION_DISK_READ false;;esac;ask "$Y" '磁盘写入处置 [y/N]：';case "$REPLY" in y|Y)setval AUTO_ACTION_DISK_WRITE true;;*)setval AUTO_ACTION_DISK_WRITE false;;esac;if grep -Eq '^AUTO_ACTION_(CPU|MEMORY|DISK_READ|DISK_WRITE)=true' "$CONFIG";then setval AUTO_ACTION terminate;setval AUTO_ACTION_CONSENT YES;else disable_all;fi;chmod 600 "$CONFIG";check&&systemctl restart "$SERVICE";say "$G" '逐项权限已保存。';fi;;
    4)say "$R" 'SIGKILL 会强制终止进程，可能损坏数据。';ask "$R" '授权请输入大写 KILL；输入 OFF 关闭：';case "$REPLY" in KILL)setval AUTO_ACTION_ALLOW_SIGKILL true;setval AUTO_ACTION_SIGKILL_CONSENT YES;say "$R" 'SIGKILL 已授权。';;OFF)setval AUTO_ACTION_ALLOW_SIGKILL false;setval AUTO_ACTION_SIGKILL_CONSENT NO;say "$G" 'SIGKILL 已关闭。';;*)say "$R" '未授权，不修改。';;esac;chmod 600 "$CONFIG";check&&systemctl restart "$SERVICE";;
    5)ask "$G" '确认关闭全部自动处置？输入 YES：';if [ "$REPLY" = YES ];then disable_all;chmod 600 "$CONFIG";systemctl restart "$SERVICE";say "$G" '全部自动处置已关闭。';else say "$G" '未确认，不修改。';fi;;
+   6)printf '\n';say "$G" '当前豁免命令关键字：';printf '%s\n' "${AUTO_ACTION_PROTECTED_CMDLINE:-未设置}";printf '\n';say "$G" '命令行包含这些关键字的进程只告警，不会被自动处置。';ask "$G" '输入要追加的关键字（如 my-build）；回车跳过：';if [ -n "$REPLY" ];then setval AUTO_ACTION_PROTECTED_CMDLINE "${AUTO_ACTION_PROTECTED_CMDLINE:-},$REPLY";chmod 600 "$CONFIG";check&&systemctl restart "$SERVICE";say "$G" '豁免名单已更新。';fi;;
    F|f|'')return 0;;0)return 20;;*)say "$R" '无效选项，仍停留在当前菜单。';;
   esac
  done
