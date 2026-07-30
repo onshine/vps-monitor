@@ -19,5 +19,9 @@ assert m.protected(P(9003,"kthreadd",""))
 assert m.protected(P(m.SELF,"python3","vps_monitor.py"))
 # 普通非白名单进程不应被豁免，否则自动处置将完全失效
 assert not m.protected(P(9004,"xmrig","/tmp/.x/xmrig -o pool.example:3333"))
+# 执行层必须二次拦截豁免进程，即使被误选为候选也不能处置
+ok,why=m.act_on_process({**P(9005,"node","npm run build"),"starttime":1,"cpu_pct":99.0,"rss_pct":50.0,"read_Bps":0,"write_Bps":0},"CPU",
+                        {"cpu":100.0,"mem":80.0,"swap":10.0,"disks":[]})
+assert ok is False and "放行" in why, why
 assert m.config_check()==0
 print("all tests passed")

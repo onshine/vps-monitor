@@ -4,11 +4,35 @@ SERVICE=vps-monitor;CONFIG=/etc/vps-monitor.env;DATA=/var/lib/vps-monitor;RUNTIM
 if [ -t 1 ];then G='\033[1;32m';Y='\033[1;33m';R='\033[1;31m';N='\033[0m';else G=;Y=;R=;N=;fi
 say(){ printf '%b%s%b\n' "$1" "$2" "$N";};ask(){ printf '%b%s%b' "$1" "$2" "$N">"$TTY";IFS= read -r REPLY<"$TTY"||REPLY=;}
 need_root(){ [ "$(id -u)" = 0 ]||{ say "$R" '请使用 sudo。';exit 1;};}
-load(){ set -a;
- # shellcheck disable=SC1090
- . "$CONFIG"
- set +a;}
-setval(){ k=$1;v=$2;if grep -q "^${k}=" "$CONFIG";then sed -i "s|^${k}=.*|${k}=${v}|" "$CONFIG";else printf '%s=%s\n' "$k" "$v">>"$CONFIG";fi;}
+load(){
+ # 安全解析：不使用 source，避免配置值中的空格或元字符被 shell 当命令执行
+ while IFS= read -r ln;do
+  case "$ln" in ''|\#*) continue;; esac
+  case "$ln" in *=*) ;; *) continue;; esac
+  k=${ln%%=*};v=${ln#*=}
+  case "$k" in [A-Z]*) ;; *) continue;; esac
+  v=${v#\"};v=${v%\"};v=${v#\'};v=${v%\'}
+  eval "$k=\$v"
+ done <"$CONFIG"
+}
+repair(){
+ # 修复历史版本写入的未加引号值，防止 shell 解析错误
+ need_root
+ tmp=$(mktemp);flag=$(mktemp)
+ while IFS= read -r ln;do
+  case "$ln" in
+   ''|\#*) printf '%s\n' "$ln">>"$tmp";continue;;
+  esac
+  case "$ln" in *=*) ;; *) printf '%s\n' "$ln">>"$tmp";continue;; esac
+  k=${ln%%=*};v=${ln#*=}
+  case "$k" in [A-Z]*) ;; *) printf '%s\n' "$ln">>"$tmp";continue;; esac
+  case "$v" in \"*\") printf '%s\n' "$ln">>"$tmp";continue;; esac
+  printf '%s="%s"\n' "$k" "$v">>"$tmp";echo 1>>"$flag"
+ done <"$CONFIG"
+ if [ -s "$flag" ];then cat "$tmp">"$CONFIG";chmod 600 "$CONFIG";say "$G" '配置格式已修复（已为含空格的值补上引号）。';else say "$G" '配置格式正常，无需修复。';fi
+ rm -f "$tmp" "$flag"
+}
+setval(){ k=$1;v=$2;if grep -q "^${k}=" "$CONFIG";then sed -i "s|^${k}=.*|${k}=\"${v}\"|" "$CONFIG";else printf '%s="%s"\n' "$k" "$v">>"$CONFIG";fi;}
 mask(){ v=$1;[ -z "$v" ]&&{ printf '未配置';return;};if [ ${#v} -le 8 ];then printf '********';else printf '%s…%s' "$(printf %s "$v"|cut -c1-6)" "$(printf %s "$v"|rev|cut -c1-4|rev)";fi;}
 yn(){ [ "${1:-false}" = true ]&&printf '已授权' || printf '未授权';}
 pause_back(){ ask "$G" '按回车或输入 F 返回上一级；输入 0 退出：';[ "$REPLY" = 0 ]&&return 20;return 0;}
@@ -73,5 +97,5 @@ configure(){ need_root
   esac
  done
 }
-usage(){ echo '命令：status|logs|show-config|configure|authorize-actions|disable-actions|test|restart|reports|actions|version|delete-log|uninstall';}
-case "${1:-}" in status)systemctl status "$SERVICE" --no-pager --full;;logs)tail -n "${2:-10}" "$RUNTIME" 2>/dev/null||echo '暂无脚本进程日志。';;show-config)show_config;;configure|config)configure;;authorize-actions)action_menu;;disable-actions)need_root;disable_all;chmod 600 "$CONFIG";systemctl restart "$SERVICE";say "$G" '全部自动处置已关闭。';;check)check;;test)load;/usr/bin/python3 /opt/vps-monitor/vps_monitor.py test-telegram;;restart)need_root;systemctl restart "$SERVICE";systemctl status "$SERVICE" --no-pager --full;;reports)ls -lht "$DATA/reports" 2>/dev/null||echo '暂无报告。';;actions)tail -n 20 "$DATA/actions.jsonl" 2>/dev/null||echo '暂无处置记录。';;version)/usr/bin/python3 /opt/vps-monitor/vps_monitor.py version;;delete-log)need_root;say "$R" '将删除专用脚本日志，不影响处置审计和系统 journal。';ask "$R" '输入 DELETE 确认：';if [ "$REPLY" = DELETE ];then :>"$RUNTIME";say "$G" '日志已清空。';else say "$R" '未授权。';fi;;uninstall)need_root;systemctl disable --now "$SERVICE"||true;rm -f /etc/systemd/system/vps-monitor.service /usr/local/bin/vps-monitorctl /usr/local/bin/vps;rm -rf /opt/vps-monitor;systemctl daemon-reload;echo '程序和 vps 快捷命令已卸载；配置和数据保留。';;*)usage;exit 1;;esac
+usage(){ echo '命令：status|logs|show-config|configure|authorize-actions|disable-actions|set|allow|test|restart|reports|actions|version|delete-log|uninstall';}
+case "${1:-}" in status)systemctl status "$SERVICE" --no-pager --full;;logs)tail -n "${2:-10}" "$RUNTIME" 2>/dev/null||echo '暂无脚本进程日志。';;show-config)show_config;;configure|config)configure;;authorize-actions)action_menu;;disable-actions)need_root;disable_all;chmod 600 "$CONFIG";systemctl restart "$SERVICE";say "$G" '全部自动处置已关闭。';;check)check;;repair)repair;;set)need_root;if [ -z "${2:-}" ]||[ -z "${3:-}" ];then say "$R" '用法：vps-monitorctl set 键 值';exit 1;fi;setval "$2" "$3";chmod 600 "$CONFIG";check&&systemctl restart "$SERVICE";say "$G" "已设置 $2=$3";;allow)need_root;load;if [ -z "${2:-}" ];then say "$R" '用法：vps-monitorctl allow 命令关键字';exit 1;fi;setval AUTO_ACTION_PROTECTED_CMDLINE "${AUTO_ACTION_PROTECTED_CMDLINE:-},$2";chmod 600 "$CONFIG";check&&systemctl restart "$SERVICE";say "$G" "已加入豁免名单：$2";;test)load;/usr/bin/python3 /opt/vps-monitor/vps_monitor.py test-telegram;;restart)need_root;systemctl restart "$SERVICE";systemctl status "$SERVICE" --no-pager --full;;reports)ls -lht "$DATA/reports" 2>/dev/null||echo '暂无报告。';;actions)tail -n 20 "$DATA/actions.jsonl" 2>/dev/null||echo '暂无处置记录。';;version)/usr/bin/python3 /opt/vps-monitor/vps_monitor.py version;;delete-log)need_root;say "$R" '将删除专用脚本日志，不影响处置审计和系统 journal。';ask "$R" '输入 DELETE 确认：';if [ "$REPLY" = DELETE ];then :>"$RUNTIME";say "$G" '日志已清空。';else say "$R" '未授权。';fi;;uninstall)need_root;systemctl disable --now "$SERVICE"||true;rm -f /etc/systemd/system/vps-monitor.service /usr/local/bin/vps-monitorctl /usr/local/bin/vps;rm -rf /opt/vps-monitor;systemctl daemon-reload;echo '程序和 vps 快捷命令已卸载；配置和数据保留。';;*)usage;exit 1;;esac

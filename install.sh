@@ -26,9 +26,16 @@ install -m 0755 "$ROOT/menu.sh" /usr/local/bin/vps
 if [ ! -f /etc/vps-monitor.env ];then install -m 0600 "$ROOT/vps-monitor.env.example" /etc/vps-monitor.env;sed -i "s/^FORENSICS_MODE=.*/FORENSICS_MODE=$MODE/;s/^FORENSICS_CONSENT=.*/FORENSICS_CONSENT=$CONSENT/" /etc/vps-monitor.env;fi
 chown -R root:root /opt/vps-monitor /var/lib/vps-monitor /etc/vps-monitor.env;chmod 0600 /etc/vps-monitor.env
 systemctl daemon-reload;systemctl enable vps-monitor.service
+if [ -x /usr/local/bin/vps-monitorctl ];then /usr/local/bin/vps-monitorctl repair >/dev/null 2>&1||true;fi
 set -a
-# shellcheck disable=SC1091
-. /etc/vps-monitor.env
+while IFS= read -r ln;do
+ case "$ln" in ''|\#*) continue;; esac
+ case "$ln" in *=*) ;; *) continue;; esac
+ k=${ln%%=*};v=${ln#*=}
+ case "$k" in [A-Z]*) ;; *) continue;; esac
+ v=${v#\"};v=${v%\"}
+ eval "$k=\$v"
+done </etc/vps-monitor.env
 set +a
 /usr/bin/python3 /opt/vps-monitor/vps_monitor.py check;systemctl restart vps-monitor.service
 say "$G" '安装/更新成功。'

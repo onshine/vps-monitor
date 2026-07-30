@@ -5,7 +5,7 @@ from collections import deque
 from datetime import datetime
 from pathlib import Path
 
-VERSION="2.4.1"
+VERSION="2.4.2"
 def env(name,default,cast=str):
  try:return cast(os.getenv(name,str(default)))
  except:return default
@@ -255,6 +255,7 @@ def post_metrics():
  return f"CPU={cpu:.1f}% 内存={mem:.1f}% Swap={swap:.1f}% 磁盘=[{'; '.join(ds[:4]) or '无块设备数据'}]"
 def act_on_process(p,kind,s):
  now=time.time();pid=p["pid"];start=p["starttime"]
+ if protected(p):return False,"进程在保护/豁免名单中，已放行"
  if recent_actions(now)>=ACTION_HOURLY:return False,"每小时动作上限已触发"
  if not proc_alive(pid,start):return False,"PID 已退出或被复用"
  before=system_metrics(s);cmd=p.get("cmd","")[:500];action="SIGTERM";result=""
