@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 """VPS Sentinel — dependency-free Linux resource monitor and incident collector."""
-import argparse, html, json, os, resource, shutil, socket, subprocess, sys, time, traceback, urllib.parse, urllib.request, uuid
+import argparse, html, json, os, re, resource, shutil, socket, subprocess, sys, time, traceback, urllib.parse, urllib.request, uuid
 from collections import deque
 from datetime import datetime
 from pathlib import Path
 
-VERSION="2.5.1"
+VERSION="2.6.0"
 def env(name,default,cast=str):
  try:return cast(os.getenv(name,str(default)))
  except:return default
@@ -28,7 +28,7 @@ THROTTLE_FREEZE=os.getenv("AUTO_ACTION_THROTTLE_FREEZE","true").lower() in ("1",
 ESCALATE=max(0,env("AUTO_ACTION_ESCALATE_AFTER",6,int))
 PROC_CPU_MIN=max(1,env("AUTO_ACTION_PROCESS_CPU_MIN",70,float)); PROC_MEM_MIN=max(1,env("AUTO_ACTION_PROCESS_MEMORY_MIN",25,float)); PROC_READ_MIN=max(1,env("AUTO_ACTION_PROCESS_READ_MBPS_MIN",10,float))*1048576; PROC_WRITE_MIN=max(1,env("AUTO_ACTION_PROCESS_WRITE_MBPS_MIN",10,float))*1048576
 PROTECTED={x.strip() for x in os.getenv("AUTO_ACTION_PROTECTED_NAMES","systemd,sshd,ssh,init,kthreadd,kworker,rcu_sched,systemd-journal,systemd-udevd,dbus-daemon,cron,containerd,dockerd,mysqld,mariadbd,postgres,redis-server,mongod").split(",") if x.strip()}
-PROTECTED_CMD=[x.strip().lower() for x in os.getenv("AUTO_ACTION_PROTECTED_CMDLINE","vite build,npm run build,npm install,yarn build,yarn install,pnpm build,pnpm install,webpack,rollup,esbuild,tsc,next build,nuxt build,cargo build,go build,mvn ,gradle,make ,cmake,gcc ,g++ ,rustc,pip install,poetry install,composer install,bundle install,docker build,apt-get,apt ,dnf ,yum ,dpkg,rsync,tar ,unzip,7z,borg,restic,duplicity,mysqldump,pg_dump").split(",") if x.strip()]
+PROTECTED_CMD=[x.strip().lower() for x in os.getenv("AUTO_ACTION_PROTECTED_CMDLINE","vite build,npm run build,npm install,npm ci,docker build,apt-get,dpkg,mysqldump").split(",") if x.strip()]
 ACTION_LOG=DATA/"actions.jsonl"; ACTION_LOG_WARN=100*1048576
 PAGE=os.sysconf("SC_PAGE_SIZE"); CLK=os.sysconf(os.sysconf_names["SC_CLK_TCK"]); SELF=os.getpid()
 MODE=os.getenv("FORENSICS_MODE","basic").lower(); CONSENT=os.getenv("FORENSICS_CONSENT","") == "YES"; FULL=MODE == "full" and CONSENT
@@ -107,6 +107,37 @@ def inode_usage():
    if s.f_files:rows.append({"source":source,"used":100*(s.f_files-s.f_favail)/s.f_files,"mount":mount})
   except:pass
  return rows
+REDACT_ON=os.getenv("REDACT_SECRETS","true").lower() in ("1","true","yes")
+_RE_SECRET=[
+ re.compile(r"\b\d{6,12}:AA[\w-]{30,}"),                                  # Telegram bot token
+ re.compile(r"\b(?:gh[pousr]|github_pat)_[A-Za-z0-9_]{20,}"),             # GitHub token
+ re.compile(r"\b(?:sk|rk)-[A-Za-z0-9_-]{16,}"),                           # OpenAI 类密钥
+ re.compile(r"\bAKIA[0-9A-Z]{12,}"),                                      # AWS access key
+ re.compile(r"\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}"), # JWT
+ re.compile(r"(?i)\b(?:-{1,2})?(?:token|api[_-]?key|apikey|secret|password|passwd|pwd|access[_-]?key|auth[_-]?token|bot[_-]?token|private[_-]?key)\b(\s*[=:]\s*|\s+)(\"[^\"]+\"|'[^']+'|\S+)"),
+]
+def redact(s):
+ """从取证输出中移除疑似密钥，避免报告经 Telegram 外发时泄露凭据。"""
+ if not REDACT_ON or not s:return s
+ out=s
+ for i,rx in enumerate(_RE_SECRET):
+  if i==len(_RE_SECRET)-1:out=rx.sub(lambda m:m.group(0)[:m.start(1)-m.start(0)]+m.group(1)+"[REDACTED]",out)
+  else:out=rx.sub("[REDACTED]",out)
+ return out
+def container_of(p):
+ """从 cgroup 解析容器 ID，并映射为容器名与镜像，便于直接定位服务。"""
+ cid=""
+ for tok in re.findall(r"(?:docker[-/]|libpod-|cri-containerd[-:])([0-9a-f]{12,64})",p.get("cgroup","") or ""):
+  cid=tok;break
+ if not cid:return {"id":"","name":"","image":""}
+ short=cid[:12];info=DOCKER_MAP.get(short)
+ if info is None and shutil.which("docker"):
+  for line in command(["docker","ps","--no-trunc","--format","{{.ID}}\t{{.Names}}\t{{.Image}}"],8).splitlines():
+   f=line.split("\t")
+   if len(f)==3:DOCKER_MAP[f[0][:12]]={"name":f[1],"image":f[2]}
+  info=DOCKER_MAP.get(short)
+ return {"id":short,"name":(info or {}).get("name",""),"image":(info or {}).get("image","")}
+DOCKER_MAP={}
 def human(n):
  for u in ("B","KiB","MiB","GiB","TiB"):
   if abs(n)<1024:return f"{n:.1f}{u}"
@@ -136,11 +167,18 @@ def snapshot(pc,pd,pp,dt,scan_proc=True,proc_dt=None):
    if q and v[0]==q[0]:rates[pid]={"read_Bps":max(0,v[1]-q[1])/proc_dt,"write_Bps":max(0,v[2]-q[2])/proc_dt,"cpu_pct":max(0,v[3]-q[3])/CLK/proc_dt*100,"rss":v[4],"rss_pct":100*v[4]/max(1,mi.get("MemTotal",1))}
  fs=fs_usage(); ino=inode_usage()
  return c,ds,ps,{"time":datetime.now().astimezone().isoformat(),"cpu":cpu,"mem":mem,"swap":swap,"meminfo":mi,"disks":disks,"rates":rates,"fs":fs,"inodes":ino}
-def reasons(s):
- r=[]
+MEM_SUSTAIN=max(0,env("MEMORY_SUSTAIN_SECONDS",120,int))
+_MEM_SINCE={}
+def sustained(key,hit,now,need):
+ """瞬时冲高不告警：仅当同一指标连续超限达到指定秒数才计入。"""
+ if not hit:_MEM_SINCE.pop(key,None);return False
+ t=_MEM_SINCE.setdefault(key,now)
+ return (now-t)>=need
+def reasons(s,now=None):
+ r=[];now=now if now is not None else time.monotonic()
  if s["cpu"]>=CPU_LIMIT:r.append(f"CPU {s['cpu']:.1f}% ≥ {CPU_LIMIT:g}%")
- if s["mem"]>=MEM_LIMIT:r.append(f"内存 {s['mem']:.1f}% ≥ {MEM_LIMIT:g}%")
- if s["swap"]>=SWAP_LIMIT and s["meminfo"].get("SwapTotal",0):r.append(f"Swap {s['swap']:.1f}% ≥ {SWAP_LIMIT:g}%")
+ if sustained("mem",s["mem"]>=MEM_LIMIT,now,MEM_SUSTAIN):r.append(f"内存 {s['mem']:.1f}% ≥ {MEM_LIMIT:g}%（已持续 ≥{MEM_SUSTAIN}s）")
+ if sustained("swap",s["swap"]>=SWAP_LIMIT and bool(s["meminfo"].get("SwapTotal",0)),now,MEM_SUSTAIN):r.append(f"Swap {s['swap']:.1f}% ≥ {SWAP_LIMIT:g}%（已持续 ≥{MEM_SUSTAIN}s）")
  hot=[d for d in s["disks"] if d["util"]>=IO_LIMIT or (READ_LIMIT and d["read_Bps"]>=READ_LIMIT) or (WRITE_LIMIT and d["write_Bps"]>=WRITE_LIMIT)]
  if hot:r.append("磁盘 I/O "+", ".join(f"{d['dev']} util={d['util']:.1f}% R={human(d['read_Bps'])}/s W={human(d['write_Bps'])}/s" for d in hot))
  bad=[x for x in s["fs"] if x["used"]>=FS_LIMIT]
@@ -181,7 +219,7 @@ def make_report(rs,s):
  sections=[("UPTIME/LOAD",["uptime"]),("MEMORY",["free","-h"]),("VMSTAT",["vmstat","1","3"]),("IOSTAT",["iostat","-xz","1","2"]),("PSI","cat /proc/pressure/cpu /proc/pressure/io /proc/pressure/memory 2>/dev/null"),("FILESYSTEM",["df","-hT"]),("INODES",["df","-ih"]),("BLOCK DEVICES",["lsblk","-o","NAME,KNAME,TYPE,SIZE,FSTYPE,MOUNTPOINTS,ROTA,MODEL"]),("MOUNTS",["findmnt"])]
  if FULL:sections += [("NETWORK SUMMARY","ss -s; ss -tunap 2>/dev/null | head -300"),("KERNEL/SYSTEM WARNINGS","dmesg -T 2>/dev/null | tail -200; journalctl -p warning --since '-15 min' --no-pager 2>/dev/null | tail -300"),("CONTAINERS","docker stats --no-stream 2>/dev/null; docker ps --no-trunc 2>/dev/null"),("FAILED SERVICES","systemctl --failed --no-pager 2>/dev/null")]
  for title,cmd in sections:lines += ["",title+":",command(cmd,15)]
- payload="\n".join(lines)
+ payload=redact("\n".join(lines))
  if len(payload.encode(errors="replace"))>MAX_REPORT:payload=payload.encode(errors="replace")[:MAX_REPORT].decode(errors="replace")+"\n[TRUNCATED: report safety limit reached]"
  out=REPORTS/f"incident-{now.strftime('%Y%m%d-%H%M%S')}.txt"; out.write_text(payload,errors="replace"); return out
 
@@ -204,10 +242,35 @@ def common_fields():
  return f
 def send_message(message):
  f=common_fields();f.update({"text":message,"parse_mode":"HTML"});return telegram("sendMessage",f)
+def offender_block(s):
+ """挑出当次异常的主要来源进程，输出可直接判断服务归属的摘要。"""
+ if not s.get("rates"):return ""
+ total=max(1,s["meminfo"].get("MemTotal",1))
+ best=None
+ for pid,r in s["rates"].items():
+  if pid==SELF:continue
+  score=max(r["rss_pct"],r["cpu_pct"],r["read_Bps"]/1048576,r["write_Bps"]/1048576)
+  if best is None or score>best[0]:best=(score,pid,r)
+ if not best:return ""
+ _,pid,r=best;p=enrich(pid,r);c=container_of(p)
+ cmd=redact(p.get("cmd","") or "")[:200]
+ rows=[f"PID：{pid}",f"程序：{p.get('comm','')}",f"用户：UID {p.get('uid','?')}",
+       f"内存：{human(r['rss'])}（宿主机总共 {human(total)}，占 {r['rss_pct']:.1f}%）",
+       f"CPU：{r['cpu_pct']:.1f}%",f"磁盘：读 {human(r['read_Bps'])}/s 写 {human(r['write_Bps'])}/s",
+       f"命令：{cmd or '[内核线程]'}"]
+ if c["name"]:rows.append(f"容器：{c['name']}")
+ if c["image"]:rows.append(f"镜像：{c['image']}")
+ return "\n".join(rows)
 def send_alert(rs,path,s):
- caption=f"🚨 {HOST}\n"+"\n".join(rs)+f"\nCPU {s['cpu']:.1f}%｜内存 {s['mem']:.1f}%｜Swap {s['swap']:.1f}%\n完整取证见附件"
+ head=f"🚨 {HOST}\n"+"\n".join(rs)+f"\nCPU {s['cpu']:.1f}%｜内存 {s['mem']:.1f}%｜Swap {s['swap']:.1f}%"
+ blk=offender_block(s)
+ caption=head+("\n\n主要来源\n"+blk if blk else "")+"\n\n完整取证见附件"
  f=common_fields();f["caption"]=caption[:1024];ok,why=telegram("sendDocument",f,path)
- if not ok:send_message(f"🚨 <b>VPS 异常告警</b>\n主机：<code>{html.escape(HOST)}</code>\n{html.escape('; '.join(rs))}\n报告保存在：<code>{html.escape(str(path))}</code>\n附件发送失败：{html.escape(why)}")
+ if not ok:
+  body=f"🚨 <b>VPS 异常告警</b>\n主机：<code>{html.escape(HOST)}</code>\n{html.escape('; '.join(rs))}"
+  if blk:body+="\n\n<b>主要来源</b>\n<code>"+html.escape(blk)+"</code>"
+  body+=f"\n报告保存在：<code>{html.escape(str(path))}</code>\n附件发送失败：{html.escape(why)}"
+  send_message(body)
  return ok,why
 def proc_alive(pid,start):
  v=proc_one(pid);return bool(v and v[0]==start)
@@ -273,7 +336,7 @@ def act_on_process(p,kind,s,stage="throttle"):
  if protected(p):return False,"进程在保护/豁免名单中，已放行"
  if recent_actions(now)>=ACTION_HOURLY:return False,"每小时动作上限已触发"
  if not proc_alive(pid,start):return False,"PID 已退出或被复用"
- before=system_metrics(s);cmd=p.get("cmd","")[:500];result=""
+ before=system_metrics(s);cmd=redact(p.get("cmd","") or "")[:500];cinfo=container_of(p);result=""
  if stage=="throttle":
   action="降级(限速)";result=throttle(p,kind)
  else:
@@ -288,10 +351,18 @@ def act_on_process(p,kind,s,stage="throttle"):
    else:result="进程已退出"
   except Exception as e:result=f"操作失败：{e}"
  after=post_metrics()
- row={"epoch":now,"time":datetime.now().astimezone().isoformat(),"host":HOST,"trigger":kind,"stage":stage,"pid":pid,"starttime":start,"comm":p.get("comm"),"cmd":cmd,"exe":p.get("exe"),"action":action,"result":result,"before":before,"after":after,"process":{"cpu_pct":p["cpu_pct"],"rss_pct":p["rss_pct"],"read_Bps":p["read_Bps"],"write_Bps":p["write_Bps"]}}
+ row={"epoch":now,"time":datetime.now().astimezone().isoformat(),"host":HOST,"trigger":kind,"stage":stage,"pid":pid,"starttime":start,"comm":p.get("comm"),"uid":p.get("uid"),"cmd":cmd,"exe":p.get("exe"),"container":cinfo.get("name",""),"image":cinfo.get("image",""),"action":action,"result":result,"before":before,"after":after,"process":{"cpu_pct":p["cpu_pct"],"rss":p["rss"],"rss_pct":p["rss_pct"],"read_Bps":p["read_Bps"],"write_Bps":p["write_Bps"]}}
  log_action(row)
  tip="\n提示：进程已被限速/冻结，未终止。恢复请执行 kill -CONT %d"%pid if stage=="throttle" else ""
- msg=f"🔴 <b>VPS 自动处置记录</b>\n主机：<code>{html.escape(HOST)}</code>\n时间：{html.escape(row['time'])}\n触发：{kind}\n动作：<b>{action}</b>\nPID：<code>{pid}</code>｜程序：<code>{html.escape(p.get('comm',''))}</code>\n命令：<code>{html.escape(cmd[:300])}</code>\n进程：CPU {p['cpu_pct']:.1f}%｜内存 {p['rss_pct']:.1f}%｜读 {human(p['read_Bps'])}/s｜写 {human(p['write_Bps'])}/s\n处置前：{html.escape(before)}\n结果：{html.escape(result)}\n处置后：{html.escape(after)}{tip}\n审计：<code>{ACTION_LOG}</code>"
+ total=max(1,s["meminfo"].get("MemTotal",1)) if s.get("meminfo") else 1
+ svc=f"\n容器：<code>{html.escape(cinfo['name'])}</code>" if cinfo.get("name") else ""
+ svc+=f"\n镜像：<code>{html.escape(cinfo['image'])}</code>" if cinfo.get("image") else ""
+ msg=(f"🔴 <b>VPS 自动处置记录</b>\n主机：<code>{html.escape(HOST)}</code>\n时间：{html.escape(row['time'])}\n触发：{kind}\n动作：<b>{action}</b>"
+      f"\nPID：<code>{pid}</code>\n程序：<code>{html.escape(p.get('comm',''))}</code>\n用户：UID {html.escape(str(p.get('uid','?')))}"
+      f"\n内存：{human(p['rss'])}（宿主机总共 {human(total)}，占 {p['rss_pct']:.1f}%）"
+      f"\nCPU：{p['cpu_pct']:.1f}%\n磁盘：读 {human(p['read_Bps'])}/s 写 {human(p['write_Bps'])}/s"
+      f"\n命令：<code>{html.escape(cmd[:300])}</code>{svc}"
+      f"\n处置前：{html.escape(before)}\n结果：{html.escape(result)}\n处置后：{html.escape(after)}{tip}\n审计：<code>{ACTION_LOG}</code>")
  send_message(msg)
  try:
   if ACTION_LOG.stat().st_size>ACTION_LOG_WARN:send_message(f"⚠️ 自动处置审计日志已超过 100MiB：<code>{ACTION_LOG}</code>。请人工决定是否归档或删除；程序不会自动清理。")
@@ -374,7 +445,7 @@ def main():
    nc,nd,np,s=snapshot(pc,pd,pp,dt,scan,now-last_proc if scan else dt);pc,pd=nc,nd
    audit_self(time.monotonic()-now)
    if scan:pp=np;last_proc=now
-   rs=reasons(s)
+   rs=reasons(s,now)
    if METRICS_INTERVAL and now-last_metric>=METRICS_INTERVAL:metric(s);last_metric=now
    p,kind=action_candidate(s,rs)
    if p:

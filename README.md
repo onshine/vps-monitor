@@ -209,7 +209,9 @@ Telegram 配置中的两个可选变量：
 | `SELF_RSS_MAX_MB` | `80` | 内部 RSS 退出线；外部硬上限 96MiB |
 | `MAX_REPORT_SIZE_MB` | `5` | 单报告最大值 |
 | `AUTO_ACTION_PROTECTED_NAMES` | 系统与数据库 | 永不处置的程序名 |
-| `AUTO_ACTION_PROTECTED_CMDLINE` | 构建与维护任务 | 命令行含这些关键字的进程只告警、不处置 |
+| `AUTO_ACTION_PROTECTED_CMDLINE` | 少量构建命令 | 命令行含这些关键字的进程只告警、不处置 |
+| `MEMORY_SUSTAIN_SECONDS` | `120` | 内存/Swap 需连续超限达到该秒数才告警 |
+| `REDACT_SECRETS` | `true` | 报告与通知中自动隐藏疑似 Token、密钥、密码 |
 
 更新单个变量并验证、重启：
 
@@ -405,9 +407,28 @@ sudo vps-monitorctl disable-actions
 
 PID 1、内核线程、SSH、systemd、Docker/containerd，以及 MySQL、MariaDB、PostgreSQL、Redis、MongoDB 默认受保护。
 
-### 构建与维护任务豁免
+### 敏感信息脱敏
 
-命令行包含以下关键字的进程只告警、不处置：前端构建、编译、包管理、镜像构建、打包解压、备份导出等。
+报告与通知会自动隐藏疑似凭据，替换为 `[REDACTED]`：Telegram Bot Token、GitHub Token、`sk-` 类 API Key、AWS Access Key、JWT，以及 `--token`、`--password`、`API_KEY=` 等键值形式。
+
+原因是取证会读取 `/proc/<pid>/cmdline`，而部分程序把密钥直接写在启动参数里。脱敏默认开启：
+
+```ini
+REDACT_SECRETS="true"
+```
+
+脱敏是启发式匹配，不能保证覆盖所有自定义格式。仍应把报告只发往私人会话，并优先用环境变量或 secrets 传递密钥，不要写在命令行。
+
+### 构建任务豁免
+
+默认名单刻意收窄，只保留少量高频构建与维护命令：
+
+```text
+vite build, npm run build, npm install, npm ci,
+docker build, apt-get, dpkg, mysqldump
+```
+
+名单按命令行子串匹配，范围越大越容易被伪装绕过，所以不再默认包含 `tar`、`rsync`、`gcc`、`make` 等通用命令。需要时自行追加。
 
 查看当前名单：
 
@@ -428,6 +449,58 @@ sudo vps-monitorctl reset-allow
 ```
 
 > 🔴 自动处置仍可能中断服务。挖矿程序通常因持续高 CPU 成为候选，但项目不靠进程名猜测，而是依据用户授权的资源类别、连续贡献和保护名单执行。发现异常后仍应排查入侵入口、账号、计划任务和持久化后门。
+
+### 容器内存限制
+
+容器默认没有内存上限，等于可占用整机内存；任何一个容器泄漏都会触发全局 OOM，连带杀掉其它服务。建议逐个设限。
+
+进入 `vps` → `4` → `6`，会先列出每个容器的当前用量和上限，再选择设置或取消。也可直接执行：
+
+```bash
+sudo vps-monitorctl containers
+```
+
+等价的手工命令：
+
+```bash
+docker update --memory=1400m --memory-swap=1400m bemby
+```
+
+查看是否生效：
+
+```bash
+docker inspect bemby --format '{{.HostConfig.Memory}}'
+```
+
+注意 `docker update` 只改运行中的容器。用 compose 重建后会丢失，需要写进 compose 文件：
+
+```yaml
+services:
+  bemby:
+    mem_limit: 1400m
+    memswap_limit: 1400m
+```
+
+然后重建：
+
+```bash
+docker compose up -d
+```
+
+设限后该容器超限只会终止自己容器内的进程，不再拖垮整机。
+
+### 内存告警的持续时间判定
+
+内存和 Swap 采用持续超限判定，默认需连续 120 秒才告警：
+
+```ini
+MEMORY_THRESHOLD="90"
+MEMORY_SUSTAIN_SECONDS="120"
+```
+
+这样前端构建等几十秒的冲高不会误报，而真正的内存泄漏仍会告警。CPU 和磁盘 I/O 不受此限制，仍按连续采样次数判定。
+
+> 降级对内存耗尽基本无效：`nice`、`ionice`、`SIGSTOP` 都不释放已占用的内存。内存类异常若要自动缓解，必须允许升级到终止，即 `AUTO_ACTION_ESCALATE_AFTER` 大于 0。
 
 ### 每次处置的 TG 和本地审计
 
