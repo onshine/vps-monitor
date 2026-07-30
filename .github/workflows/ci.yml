@@ -17,5 +17,6 @@ jobs:
         env:
           MONITOR_DATA_DIR: ${{ runner.temp }}/vps-monitor
       - run: python test_parser.py
-      - run: shellcheck install.sh quick-install.sh vps-monitorctl
+      - run: sh test_ctl.sh
+      - run: shellcheck install.sh quick-install.sh vps-monitorctl menu.sh
       - run: docker build -t vps-monitor:test .

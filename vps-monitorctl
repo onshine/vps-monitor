@@ -14,7 +14,7 @@ load(){
   k=${ln%%=*};v=${ln#*=}
   case "$k" in [A-Z]*) ;; *) continue;; esac
   v=${v#\"};v=${v%\"};v=${v#\'};v=${v%\'}
-  eval "$k=\$v"
+  eval "export $k=\$v"
  done <"$CONFIG"
 }
 repair(){
