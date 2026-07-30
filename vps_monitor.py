@@ -5,7 +5,7 @@ from collections import deque
 from datetime import datetime
 from pathlib import Path
 
-VERSION="2.6.0"
+VERSION="2.6.1"
 def env(name,default,cast=str):
  try:return cast(os.getenv(name,str(default)))
  except:return default
@@ -331,7 +331,7 @@ def throttle(p,kind):
   try:os.kill(pid,19);done.append("SIGSTOP冻结")
   except Exception as e:done.append(f"冻结失败:{e}")
  return ",".join(done) or "无可用降级手段"
-def act_on_process(p,kind,s,stage="throttle"):
+def act_on_process(p,kind,s,stage="throttle",report=None):
  now=time.time();pid=p["pid"];start=p["starttime"]
  if protected(p):return False,"进程在保护/豁免名单中，已放行"
  if recent_actions(now)>=ACTION_HOURLY:return False,"每小时动作上限已触发"
@@ -353,6 +353,9 @@ def act_on_process(p,kind,s,stage="throttle"):
  after=post_metrics()
  row={"epoch":now,"time":datetime.now().astimezone().isoformat(),"host":HOST,"trigger":kind,"stage":stage,"pid":pid,"starttime":start,"comm":p.get("comm"),"uid":p.get("uid"),"cmd":cmd,"exe":p.get("exe"),"container":cinfo.get("name",""),"image":cinfo.get("image",""),"action":action,"result":result,"before":before,"after":after,"process":{"cpu_pct":p["cpu_pct"],"rss":p["rss"],"rss_pct":p["rss_pct"],"read_Bps":p["read_Bps"],"write_Bps":p["write_Bps"]}}
  log_action(row)
+ if report is None:
+  try:report=make_report([f"自动处置（{kind}）"],s)
+  except Exception:report=None
  tip="\n提示：进程已被限速/冻结，未终止。恢复请执行 kill -CONT %d"%pid if stage=="throttle" else ""
  total=max(1,s["meminfo"].get("MemTotal",1)) if s.get("meminfo") else 1
  svc=f"\n容器：<code>{html.escape(cinfo['name'])}</code>" if cinfo.get("name") else ""
@@ -363,7 +366,11 @@ def act_on_process(p,kind,s,stage="throttle"):
       f"\nCPU：{p['cpu_pct']:.1f}%\n磁盘：读 {human(p['read_Bps'])}/s 写 {human(p['write_Bps'])}/s"
       f"\n命令：<code>{html.escape(cmd[:300])}</code>{svc}"
       f"\n处置前：{html.escape(before)}\n结果：{html.escape(result)}\n处置后：{html.escape(after)}{tip}\n审计：<code>{ACTION_LOG}</code>")
- send_message(msg)
+ sent=False
+ if report:
+  plain=re.sub(r"<[^>]+>","",msg).replace("&lt;","<").replace("&gt;",">").replace("&amp;","&")
+  f=common_fields();f["caption"]=plain[:1024];sent,_=telegram("sendDocument",f,report)
+ if not sent:send_message(msg+("\n报告：<code>%s</code>"%report if report else ""))
  try:
   if ACTION_LOG.stat().st_size>ACTION_LOG_WARN:send_message(f"⚠️ 自动处置审计日志已超过 100MiB：<code>{ACTION_LOG}</code>。请人工决定是否归档或删除；程序不会自动清理。")
  except:pass
@@ -438,14 +445,14 @@ def config_check():
   print("ERROR: "+"; ".join(errors),file=sys.stderr);return 1
  return 0
 def main():
- print(f"VPS Sentinel {VERSION} started host={HOST} pid={SELF} interval={INTERVAL}s",flush=True); cleanup(); pc=cpu_raw();pd=disks_raw();pp=procs_raw() if FULL else {};last=time.monotonic();last_proc=last;last_metric=0;bad=good=0;active=False;last_alert=0;candidate_key=None;candidate_hits=0
+ print(f"VPS Sentinel {VERSION} started host={HOST} pid={SELF} interval={INTERVAL}s",flush=True); cleanup(); pc=cpu_raw();pd=disks_raw();pp=procs_raw() if FULL else {};last=time.monotonic();last_proc=last;last_metric=0;bad=good=0;active=False;last_alert=0;candidate_key=None;candidate_hits=0;pending_report=None
  while True:
   target=last+INTERVAL;time.sleep(max(0,target-time.monotonic()));now=time.monotonic();dt=max(.1,now-last);scan=FULL and now-last_proc>=PROC_INTERVAL*.95
   try:
    nc,nd,np,s=snapshot(pc,pd,pp,dt,scan,now-last_proc if scan else dt);pc,pd=nc,nd
    audit_self(time.monotonic()-now)
    if scan:pp=np;last_proc=now
-   rs=reasons(s,now)
+   rs=reasons(s,now);pending_report=None
    if METRICS_INTERVAL and now-last_metric>=METRICS_INTERVAL:metric(s);last_metric=now
    p,kind=action_candidate(s,rs)
    if p:
@@ -454,13 +461,15 @@ def main():
     else:candidate_key=key;candidate_hits=1
     if candidate_hits>=ACTION_CONSEC:
      stage="throttle" if (THROTTLE_FIRST and candidate_hits<ACTION_CONSEC+ESCALATE) else "terminate"
-     acted,result=act_on_process(p,kind,s,stage);print(f"AUTO_ACTION pid={p['pid']} kind={kind} stage={stage} acted={acted} result={result}",flush=True)
+     shared=make_report(rs or [f"自动处置（{kind}）"],s)
+     acted,result=act_on_process(p,kind,s,stage,shared);print(f"AUTO_ACTION pid={p['pid']} kind={kind} stage={stage} acted={acted} result={result}",flush=True)
+     if acted:pending_report=shared
      if stage=="terminate" or not acted:candidate_key=None;candidate_hits=0
    else:candidate_key=None;candidate_hits=0
    if rs:
     bad+=1;good=0
     if bad>=CONSEC and (not active or time.time()-last_alert>=COOLDOWN):
-     path=make_report(rs,s);ok,why=send_alert(rs,path,s);print(f"ALERT {'; '.join(rs)} report={path} telegram={ok} {why}",flush=True);active=True;last_alert=time.time();cleanup()
+     path=pending_report or make_report(rs,s);ok,why=send_alert(rs,path,s);print(f"ALERT {'; '.join(rs)} report={path} telegram={ok} {why}",flush=True);active=True;last_alert=time.time();cleanup()
    else:
     bad=0;good+=1
     if active and good>=RECOVERY:send_message(f"✅ <b>VPS 已恢复</b>\n主机：<code>{html.escape(HOST)}</code>\nCPU {s['cpu']:.1f}%｜内存 {s['mem']:.1f}%｜Swap {s['swap']:.1f}%");active=False;print("RECOVERED",flush=True)

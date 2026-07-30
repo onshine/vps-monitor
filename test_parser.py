@@ -65,5 +65,19 @@ finally:
     try:os.kill(proc.pid,18)
     except Exception:pass
     proc.kill();proc.wait()
+# 每次实际处置都必须留下 TXT 现场取证，不受告警冷却影响
+before=len(list(m.REPORTS.glob("incident-*.txt")))
+proc=subprocess.Popen([sys.executable,"-c","import time\nwhile True: time.sleep(0.05)"])
+time.sleep(0.5)
+try:
+    st=m.proc_one(proc.pid)[0]
+    tgt={**P(proc.pid,"python3","/tmp/runaway --busy"),"starttime":st,"cpu_pct":99.0,"rss":1<<20,"rss_pct":5.0,"read_Bps":0,"write_Bps":0}
+    ok,_=m.act_on_process(tgt,"内存",S3,stage="throttle")
+    assert ok is True
+    assert len(list(m.REPORTS.glob("incident-*.txt")))>before,"处置必须生成取证报告"
+finally:
+    try:os.kill(proc.pid,18)
+    except Exception:pass
+    proc.kill();proc.wait()
 assert m.config_check()==0
 print("all tests passed")
