@@ -38,11 +38,25 @@
 
 **完整权限、数据泄露面、自我审计及撤权方式见 [SECURITY.md](SECURITY.md)。**
 
-## 推荐：原生一键安装
+## 安装与日常使用
 
-安装和升级的下载目录始终固定为 `vps-monitor`，不会把版本号写进目录。程序安装到 `/opt/vps-monitor`，配置保存在 `/etc/vps-monitor.env`，数据保存在 `/var/lib/vps-monitor`；以后升级不会改变路径，也不会覆盖配置和历史数据。
+安装后会创建 `vps` 快捷命令。以后所有操作都从这一个命令进入，不需要再复制长命令。
 
-### 方法一：使用 curl（完整复制到 VPS）
+程序安装到 `/opt/vps-monitor`，配置保存在 `/etc/vps-monitor.env`，数据保存在 `/var/lib/vps-monitor`。升级不会改变路径，也不会覆盖配置和历史数据。
+
+### 第一次安装
+
+首次安装需要下载引导脚本，只需执行一次。
+
+方法一，一条命令：
+
+```bash
+bash <(curl -fsSL https://raw.githubusercontent.com/onshine/vps-monitor/main/quick-install.sh)
+```
+
+进入菜单后选择 `1` 安装。
+
+方法二，先下载再校验后安装，生产服务器推荐：
 
 ```bash
 cd "$HOME" && \
@@ -58,13 +72,7 @@ cd vps-monitor && \
 sudo ./install.sh
 ```
 
-若 VPS 没有 `curl` 或 `unzip`：
-
-```bash
-sudo apt-get update && sudo apt-get install -y curl unzip
-```
-
-### 方法二：使用 wget（完整复制到 VPS）
+把 `curl` 换成 `wget`：
 
 ```bash
 cd "$HOME" && \
@@ -80,40 +88,66 @@ cd vps-monitor && \
 sudo ./install.sh
 ```
 
-若 VPS 没有 `wget` 或 `unzip`：
+缺少下载或解压工具时：
 
 ```bash
-sudo apt-get update && sudo apt-get install -y wget unzip
+sudo apt-get update && sudo apt-get install -y curl unzip
 ```
 
-安装器支持 Debian/Ubuntu、Alpine、RHEL/Fedora 系列。缺少下载或解压工具时，快速安装器会先明确询问是否自动安装。首次安装会显示清晰的交互步骤：先输入 `1`（BASIC）或 `2`（FULL）；选择 FULL 后会再次停下来要求输入大写 `YES`。所有输入直接从当前终端 `/dev/tty` 读取，不会因 `curl` 管道或 `sudo` 丢失。安装完成后配置 Telegram：
+安装器支持 Debian/Ubuntu、Alpine、RHEL/Fedora。首次安装会先要求选择 `1`（BASIC）或 `2`（FULL）；选 FULL 会再次停下要求输入大写 `YES`。所有输入直接从 `/dev/tty` 读取，不会因管道或 `sudo` 丢失。
+
+### 以后唤醒菜单
 
 ```bash
-sudo vps-monitorctl config
-sudo vps-monitorctl test
-sudo vps-monitorctl status
+vps
 ```
 
-### 一条命令下载并安装
-
-如果你接受直接执行仓库安装器，可使用：
+非 root 账号登录时用：
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/onshine/vps-monitor/main/quick-install.sh)
+sudo vps
 ```
 
-该引导脚本会把 Release 下载到用户家目录下固定的 `vps-monitor` 工作目录、验证 SHA-256，再调用交互式 `install.sh`。正式程序始终安装到 `/opt/vps-monitor`。生产服务器更推荐使用上面的完整 curl/wget 流程，以便先检查下载内容。
+菜单包含：
+
+```text
+1. 安装 vps-monitor 脚本
+2. 更新 vps-monitor 脚本
+3. 查看现有配置和权限
+4. 修改现有配置和权限
+5. 查看脚本进程日志（最近 10 条）
+6. 删除脚本进程日志
+7. 一键卸载
+0. 退出脚本
+```
 
 ### 升级
 
-升级时重新执行上面的 curl 或 wget 完整流程即可。下载工作目录始终是 `$HOME/vps-monitor`，正式程序目录始终是 `/opt/vps-monitor`；安装器检测到 `/etc/vps-monitor.env` 后自动进入升级模式：
+输入 `vps`，选择 `2`，再选择 `1`。
 
-- 保留 `/etc/vps-monitor.env` 和既有 BASIC/FULL 授权；
-- 保留 `/var/lib/vps-monitor` 中的报告及指标；
-- 替换程序、管理命令和 systemd 服务；
-- 检查配置后重启服务。
+更新项会自行从 GitHub 下载最新 Release、校验 SHA-256、解压到临时目录、执行升级，然后删除临时文件。不依赖脚本所在位置，也不需要手动下载。
 
-版本号只用于 GitHub Tag/Release 和程序内部版本，不作为 VPS 的长期目录名。
+升级行为：
+
+- 保留 `/etc/vps-monitor.env` 和既有 BASIC/FULL 授权
+- 保留 `/var/lib/vps-monitor` 中的报告与指标
+- 替换程序、管理命令和 systemd 服务
+- 自动修复历史版本遗留的配置格式问题
+- 检查配置后重启服务
+
+### 安装后配置 Telegram
+
+```bash
+sudo vps-monitorctl config
+```
+
+```bash
+sudo vps-monitorctl test
+```
+
+```bash
+sudo vps-monitorctl status
+```
 
 ## Docker（默认 BASIC）
 
@@ -174,6 +208,8 @@ Telegram 配置中的两个可选变量：
 | `METRICS_INTERVAL` | `60` | JSONL 历史间隔，0 禁用 |
 | `SELF_RSS_MAX_MB` | `80` | 内部 RSS 退出线；外部硬上限 96MiB |
 | `MAX_REPORT_SIZE_MB` | `5` | 单报告最大值 |
+| `AUTO_ACTION_PROTECTED_NAMES` | 系统与数据库 | 永不处置的程序名 |
+| `AUTO_ACTION_PROTECTED_CMDLINE` | 构建与维护任务 | 命令行含这些关键字的进程只告警、不处置 |
 
 更新单个变量并验证、重启：
 
@@ -236,7 +272,15 @@ sudo vps-monitorctl check
 sudo vps-monitorctl set CPU_THRESHOLD 85
 ```
 
-该命令会备份、检查并重启；失败自动回滚。
+该命令会检查并重启；失败自动回滚。
+
+### 修复配置格式
+
+```bash
+sudo vps-monitorctl repair
+```
+
+用于修复历史版本写入的、缺少引号的配置值。升级时会自动执行一次。
 
 ### 重启服务并显示完整状态
 
@@ -301,56 +345,95 @@ sudo vps-monitorctl uninstall
 默认配置是：
 
 ```ini
-AUTO_ACTION=none
-AUTO_ACTION_CONSENT=NO
+AUTO_ACTION="none"
+AUTO_ACTION_CONSENT="NO"
 ```
 
-未授权时只监控、取证和通知，绝不操作业务进程。自动处置必须先授权 FULL 取证并配置好 Telegram，再单独运行：
+未授权时只监控、取证和通知。授权后采用**先降级、后终止**的分级处置，优先保住 SSH 和系统可用性，而不是直接杀进程。
+
+### 分级处置流程
+
+连续确认命中后，第一阶段执行**可恢复的降级**：
+
+- `nice=19` 降低 CPU 优先级
+- `ionice -c3` 降到 I/O 空闲级，这是磁盘读取失控的关键手段
+- `SIGSTOP` 冻结进程（可选，默认开启）
+
+降级能立即释放 CPU 和磁盘带宽，让 SSH 恢复响应，且**进程和数据都还在**。恢复只需：
+
+```bash
+sudo kill -CONT <PID>
+```
+
+若降级后仍持续异常，达到 `AUTO_ACTION_ESCALATE_AFTER` 次确认才升级为 `SIGTERM`。`SIGKILL` 需要额外单独授权。
+
+相关配置：
+
+```ini
+AUTO_ACTION_THROTTLE_FIRST="true"
+AUTO_ACTION_THROTTLE_FREEZE="true"
+AUTO_ACTION_ESCALATE_AFTER="6"
+```
+
+把 `AUTO_ACTION_ESCALATE_AFTER` 设为 `0` 表示永不自动终止，只降级。这是最保守也最推荐的组合。
+
+### 授权方式
+
+必须先授权 FULL 取证并配置好 Telegram，再单独运行：
 
 ```bash
 sudo vps-monitorctl authorize-actions
 ```
 
-交互界面会用红色说明风险，要求输入大写 `YES`，随后让用户逐项选择是否授权：
+需要输入大写 `YES`，然后逐项选择 CPU、内存、磁盘读取、磁盘写入。没有选择的类别就是禁止事项。
 
-- CPU 异常；
-- 内存异常；
-- 磁盘读取异常；
-- 磁盘写入异常；
-- 是否额外允许 `SIGKILL`（必须输入 `KILL`，默认禁止）。
-
-没有选择的异常类别就是禁止事项。关闭全部自动处置：
+关闭全部自动处置：
 
 ```bash
 sudo vps-monitorctl disable-actions
 ```
 
-### 处置条件和动作
+### 处置条件
 
-程序不会看到一次峰值就杀进程。只有同时满足以下条件才处置：
+不会看到一次峰值就动手。必须同时满足：
 
-1. 整机对应指标已超过阈值；
-2. 某个进程自身贡献超过最低线；
-3. 同一 PID、同一启动时间、同一异常类别连续确认 3 次；
-4. 进程不在保护名单；
-5. 最近一小时动作次数没有达到默认上限 3 次。
+1. 整机对应指标已超过阈值
+2. 某个进程自身贡献超过最低线
+3. 同一 PID、同一启动时间、同一异常类别连续确认 3 次
+4. 进程不在保护或豁免名单
+5. 最近一小时动作次数未达上限
 
-默认只发送 `SIGTERM`，等待 10 秒让程序自行清理退出。只有用户另行输入 `KILL` 授权后，超时仍存活才发送 `SIGKILL`。PID 1、内核线程、SSH、systemd、Docker/containerd，以及 MySQL、MariaDB、PostgreSQL、Redis、MongoDB 默认受保护；用户可以扩展保护名单。
+PID 1、内核线程、SSH、systemd、Docker/containerd，以及 MySQL、MariaDB、PostgreSQL、Redis、MongoDB 默认受保护。
 
-> 🔴 自动处置可能中断服务或造成数据损失。挖矿程序通常会因为持续高 CPU 成为候选，但项目不依赖进程名称猜测“是否挖矿”，而是根据用户授权的资源类别、连续贡献和保护名单执行。管理员仍应排查入侵入口、账号、计划任务和持久化后门。
+### 构建与维护任务豁免
+
+命令行包含以下关键字的进程只告警、不处置：前端构建、编译、包管理、镜像构建、打包解压、备份导出等。
+
+查看当前名单：
+
+```bash
+sudo vps-monitorctl show-config
+```
+
+追加自己的构建命令：
+
+```bash
+sudo vps-monitorctl allow my-build.sh
+```
+
+恢复默认名单：
+
+```bash
+sudo vps-monitorctl reset-allow
+```
+
+> 🔴 自动处置仍可能中断服务。挖矿程序通常因持续高 CPU 成为候选，但项目不靠进程名猜测，而是依据用户授权的资源类别、连续贡献和保护名单执行。发现异常后仍应排查入侵入口、账号、计划任务和持久化后门。
 
 ### 每次处置的 TG 和本地审计
 
-每一次处置，无论成功、进程已退出、PID 被复用、SIGTERM 超时还是操作失败，都会记录：
+每次动作都会记录时间、主机、触发类别、PID 与启动时间、程序与命令、动作与结果、进程各项指标、处置前后的整机 CPU/内存/Swap/磁盘数据。降级通知中会附带恢复命令。
 
-- 时间、主机、触发类别；
-- PID、PID 启动时间、程序、命令和路径；
-- 动作（SIGTERM 或 SIGTERM→SIGKILL）及结果；
-- 进程 CPU、内存、读写速率；
-- 处置前整机 CPU、内存、Swap、磁盘利用率和读写速度；
-- 处置后重新采样的同类完整指标。
-
-TG 会发送一条红色处置通知；本地以 JSONL 追加保存：
+TG 发送红色处置通知，本地以 JSONL 追加保存：
 
 ```text
 /var/lib/vps-monitor/actions.jsonl
@@ -362,7 +445,7 @@ TG 会发送一条红色处置通知；本地以 JSONL 追加保存：
 sudo vps-monitorctl actions
 ```
 
-审计日志不按天数或数量自动清理。超过 100MiB 时只通过 TG 提醒用户决定是否归档或删除，程序不会自行删除。
+审计日志不自动清理。超过 100MiB 时只通过 TG 提醒，由用户决定是否归档。
 
 ## 常见问答（FAQ）
 

@@ -5,7 +5,7 @@ from collections import deque
 from datetime import datetime
 from pathlib import Path
 
-VERSION="2.4.2"
+VERSION="2.5.0"
 def env(name,default,cast=str):
  try:return cast(os.getenv(name,str(default)))
  except:return default
@@ -23,6 +23,9 @@ AUTO_CPU=os.getenv("AUTO_ACTION_CPU","false").lower() in ("1","true","yes"); AUT
 AUTO_READ=os.getenv("AUTO_ACTION_DISK_READ","false").lower() in ("1","true","yes"); AUTO_WRITE=os.getenv("AUTO_ACTION_DISK_WRITE","false").lower() in ("1","true","yes")
 AUTO_KILL=os.getenv("AUTO_ACTION_ALLOW_SIGKILL","false").lower() in ("1","true","yes"); AUTO_KILL_CONSENT=os.getenv("AUTO_ACTION_SIGKILL_CONSENT","NO") == "YES"
 ACTION_CONSEC=max(2,env("AUTO_ACTION_CONSECUTIVE",3,int)); ACTION_GRACE=max(3,env("AUTO_ACTION_GRACE_SECONDS",10,int)); ACTION_HOURLY=max(1,env("AUTO_ACTION_MAX_PER_HOUR",3,int))
+THROTTLE_FIRST=os.getenv("AUTO_ACTION_THROTTLE_FIRST","true").lower() in ("1","true","yes")
+THROTTLE_FREEZE=os.getenv("AUTO_ACTION_THROTTLE_FREEZE","true").lower() in ("1","true","yes")
+ESCALATE=max(0,env("AUTO_ACTION_ESCALATE_AFTER",6,int))
 PROC_CPU_MIN=max(1,env("AUTO_ACTION_PROCESS_CPU_MIN",70,float)); PROC_MEM_MIN=max(1,env("AUTO_ACTION_PROCESS_MEMORY_MIN",25,float)); PROC_READ_MIN=max(1,env("AUTO_ACTION_PROCESS_READ_MBPS_MIN",10,float))*1048576; PROC_WRITE_MIN=max(1,env("AUTO_ACTION_PROCESS_WRITE_MBPS_MIN",10,float))*1048576
 PROTECTED={x.strip() for x in os.getenv("AUTO_ACTION_PROTECTED_NAMES","systemd,sshd,ssh,init,kthreadd,kworker,rcu_sched,systemd-journal,systemd-udevd,dbus-daemon,cron,containerd,dockerd,mysqld,mariadbd,postgres,redis-server,mongod").split(",") if x.strip()}
 PROTECTED_CMD=[x.strip().lower() for x in os.getenv("AUTO_ACTION_PROTECTED_CMDLINE","vite build,npm run build,npm install,yarn build,yarn install,pnpm build,pnpm install,webpack,rollup,esbuild,tsc,next build,nuxt build,cargo build,go build,mvn ,gradle,make ,cmake,gcc ,g++ ,rustc,pip install,poetry install,composer install,bundle install,docker build,apt-get,apt ,dnf ,yum ,dpkg,rsync,tar ,unzip,7z,borg,restic,duplicity,mysqldump,pg_dump").split(",") if x.strip()]
@@ -253,24 +256,42 @@ def post_metrics():
   if n in d0:
    q=d0[n];ds.append(f"{n} util={max(0,v[4]-q[4])/10:.1f}% R={human(max(0,v[1]-q[1])*512)}/s W={human(max(0,v[3]-q[3])*512)}/s")
  return f"CPU={cpu:.1f}% 内存={mem:.1f}% Swap={swap:.1f}% 磁盘=[{'; '.join(ds[:4]) or '无块设备数据'}]"
-def act_on_process(p,kind,s):
+def throttle(p,kind):
+ """对进程降级而非终止：降低 CPU/IO 优先级，必要时冻结。可恢复，不丢数据。"""
+ pid=p["pid"];done=[]
+ try:os.setpriority(os.PRIO_PROCESS,pid,19);done.append("nice=19")
+ except Exception:pass
+ if shutil.which("ionice"):
+  r=command(["ionice","-c","3","-p",str(pid)],5)
+  if not r.startswith("[unavailable"):done.append("ionice=idle")
+ if THROTTLE_FREEZE:
+  try:os.kill(pid,19);done.append("SIGSTOP冻结")
+  except Exception as e:done.append(f"冻结失败:{e}")
+ return ",".join(done) or "无可用降级手段"
+def act_on_process(p,kind,s,stage="throttle"):
  now=time.time();pid=p["pid"];start=p["starttime"]
  if protected(p):return False,"进程在保护/豁免名单中，已放行"
  if recent_actions(now)>=ACTION_HOURLY:return False,"每小时动作上限已触发"
  if not proc_alive(pid,start):return False,"PID 已退出或被复用"
- before=system_metrics(s);cmd=p.get("cmd","")[:500];action="SIGTERM";result=""
- try:
-  os.kill(pid,15);deadline=time.monotonic()+ACTION_GRACE
-  while time.monotonic()<deadline and proc_alive(pid,start):time.sleep(.5)
-  if proc_alive(pid,start):
-   if AUTO_KILL and AUTO_KILL_CONSENT:os.kill(pid,9);action="SIGTERM→SIGKILL";result="SIGKILL 已发送"
-   else:result="宽限期后仍存活；未授权 SIGKILL，已停止处置"
-  else:result="进程已退出"
- except Exception as e:result=f"操作失败：{e}"
+ before=system_metrics(s);cmd=p.get("cmd","")[:500];result=""
+ if stage=="throttle":
+  action="降级(限速)";result=throttle(p,kind)
+ else:
+  action="SIGTERM"
+  try:
+   os.kill(pid,18)
+   os.kill(pid,15);deadline=time.monotonic()+ACTION_GRACE
+   while time.monotonic()<deadline and proc_alive(pid,start):time.sleep(.5)
+   if proc_alive(pid,start):
+    if AUTO_KILL and AUTO_KILL_CONSENT:os.kill(pid,9);action="SIGTERM→SIGKILL";result="SIGKILL 已发送"
+    else:result="宽限期后仍存活；未授权 SIGKILL，已停止处置"
+   else:result="进程已退出"
+  except Exception as e:result=f"操作失败：{e}"
  after=post_metrics()
- row={"epoch":now,"time":datetime.now().astimezone().isoformat(),"host":HOST,"trigger":kind,"pid":pid,"starttime":start,"comm":p.get("comm"),"cmd":cmd,"exe":p.get("exe"),"action":action,"result":result,"before":before,"after":after,"process":{"cpu_pct":p["cpu_pct"],"rss_pct":p["rss_pct"],"read_Bps":p["read_Bps"],"write_Bps":p["write_Bps"]}}
+ row={"epoch":now,"time":datetime.now().astimezone().isoformat(),"host":HOST,"trigger":kind,"stage":stage,"pid":pid,"starttime":start,"comm":p.get("comm"),"cmd":cmd,"exe":p.get("exe"),"action":action,"result":result,"before":before,"after":after,"process":{"cpu_pct":p["cpu_pct"],"rss_pct":p["rss_pct"],"read_Bps":p["read_Bps"],"write_Bps":p["write_Bps"]}}
  log_action(row)
- msg=f"🔴 <b>VPS 自动处置记录</b>\n主机：<code>{html.escape(HOST)}</code>\n时间：{html.escape(row['time'])}\n触发：{kind}\n动作：<b>{action}</b>\nPID：<code>{pid}</code>｜程序：<code>{html.escape(p.get('comm',''))}</code>\n命令：<code>{html.escape(cmd[:300])}</code>\n进程：CPU {p['cpu_pct']:.1f}%｜内存 {p['rss_pct']:.1f}%｜读 {human(p['read_Bps'])}/s｜写 {human(p['write_Bps'])}/s\n处置前：{html.escape(before)}\n结果：{html.escape(result)}\n处置后：{html.escape(after)}\n审计：<code>{ACTION_LOG}</code>"
+ tip="\n提示：进程已被限速/冻结，未终止。恢复请执行 kill -CONT %d"%pid if stage=="throttle" else ""
+ msg=f"🔴 <b>VPS 自动处置记录</b>\n主机：<code>{html.escape(HOST)}</code>\n时间：{html.escape(row['time'])}\n触发：{kind}\n动作：<b>{action}</b>\nPID：<code>{pid}</code>｜程序：<code>{html.escape(p.get('comm',''))}</code>\n命令：<code>{html.escape(cmd[:300])}</code>\n进程：CPU {p['cpu_pct']:.1f}%｜内存 {p['rss_pct']:.1f}%｜读 {human(p['read_Bps'])}/s｜写 {human(p['write_Bps'])}/s\n处置前：{html.escape(before)}\n结果：{html.escape(result)}\n处置后：{html.escape(after)}{tip}\n审计：<code>{ACTION_LOG}</code>"
  send_message(msg)
  try:
   if ACTION_LOG.stat().st_size>ACTION_LOG_WARN:send_message(f"⚠️ 自动处置审计日志已超过 100MiB：<code>{ACTION_LOG}</code>。请人工决定是否归档或删除；程序不会自动清理。")
@@ -361,7 +382,9 @@ def main():
     if key==candidate_key:candidate_hits+=1
     else:candidate_key=key;candidate_hits=1
     if candidate_hits>=ACTION_CONSEC:
-     acted,result=act_on_process(p,kind,s);print(f"AUTO_ACTION pid={p['pid']} kind={kind} acted={acted} result={result}",flush=True);candidate_key=None;candidate_hits=0
+     stage="throttle" if (THROTTLE_FIRST and candidate_hits<ACTION_CONSEC+ESCALATE) else "terminate"
+     acted,result=act_on_process(p,kind,s,stage);print(f"AUTO_ACTION pid={p['pid']} kind={kind} stage={stage} acted={acted} result={result}",flush=True)
+     if stage=="terminate" or not acted:candidate_key=None;candidate_hits=0
    else:candidate_key=None;candidate_hits=0
    if rs:
     bad+=1;good=0
