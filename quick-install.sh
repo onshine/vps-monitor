@@ -34,5 +34,5 @@ fi
 sha256sum -c SHA256SUMS
 unzip -q vps-monitor.zip
 chmod +x menu.sh install.sh vps-monitorctl
-printf '\n已下载并校验最新 Release。现在进入 VPS Monitor 管理菜单。\n\n'
+printf '\n已下载并校验最新 Release。现在进入 VPS Monitor 管理菜单。\n安装完成后，以后直接输入 vps 即可唤醒菜单。\n\n'
 exec ./menu.sh

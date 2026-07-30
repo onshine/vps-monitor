@@ -20,7 +20,9 @@ elif command -v apk>/dev/null;then apk add --no-cache python3 ca-certificates;[ 
 else say "$R" '不支持的包管理器。';exit 1;fi
 install -d -m 0755 /opt/vps-monitor /var/lib/vps-monitor/reports /var/lib/vps-monitor/metrics
 install -m 0555 "$ROOT/vps_monitor.py" /opt/vps-monitor/vps_monitor.py;install -m 0444 "$ROOT/SECURITY.md" /opt/vps-monitor/SECURITY.md
-install -m 0644 "$ROOT/vps-monitor.service" /etc/systemd/system/vps-monitor.service;install -m 0755 "$ROOT/vps-monitorctl" /usr/local/bin/vps-monitorctl
+install -m 0644 "$ROOT/vps-monitor.service" /etc/systemd/system/vps-monitor.service
+install -m 0755 "$ROOT/vps-monitorctl" /usr/local/bin/vps-monitorctl
+install -m 0755 "$ROOT/menu.sh" /usr/local/bin/vps
 if [ ! -f /etc/vps-monitor.env ];then install -m 0600 "$ROOT/vps-monitor.env.example" /etc/vps-monitor.env;sed -i "s/^FORENSICS_MODE=.*/FORENSICS_MODE=$MODE/;s/^FORENSICS_CONSENT=.*/FORENSICS_CONSENT=$CONSENT/" /etc/vps-monitor.env;fi
 chown -R root:root /opt/vps-monitor /var/lib/vps-monitor /etc/vps-monitor.env;chmod 0600 /etc/vps-monitor.env
 systemctl daemon-reload;systemctl enable vps-monitor.service
@@ -29,4 +31,9 @@ set -a
 . /etc/vps-monitor.env
 set +a
 /usr/bin/python3 /opt/vps-monitor/vps_monitor.py check;systemctl restart vps-monitor.service
-say "$G" '安装/更新成功。';say "$G" '查看状态请复制：sudo vps-monitorctl status';say "$G" '修改配置请复制：sudo vps-monitorctl configure';say "$G" '测试 TG 请复制：sudo vps-monitorctl test'
+say "$G" '安装/更新成功。'
+say "$G" '以后直接输入下面的快捷命令即可唤醒菜单：'
+say "$G" 'vps'
+say "$G" '查看状态请复制：sudo vps-monitorctl status'
+say "$G" '修改配置请复制：sudo vps-monitorctl configure'
+say "$G" '测试 TG 请复制：sudo vps-monitorctl test'
