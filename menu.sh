@@ -14,8 +14,8 @@ fetch(){
  curl -fsSL --retry 3 -o "$W/vps-monitor.zip" "$RELEASE/vps-monitor.zip"||{ say "$R" '下载失败，请检查网络。';rm -rf "$W";return 1;}
  curl -fsSL --retry 3 -o "$W/SHA256SUMS" "$RELEASE/SHA256SUMS"||{ say "$R" '校验文件下载失败。';rm -rf "$W";return 1;}
  ( cd "$W"&&sha256sum -c SHA256SUMS >/dev/null 2>&1 )||{ say "$R" '校验失败，已中止。';rm -rf "$W";return 1;}
- ( cd "$W"&&unzip -q vps-monitor.zip )||{ say "$R" '解压失败。';rm -rf "$W";return 1;}
- chmod +x "$W/install.sh" "$W/menu.sh" "$W/vps-monitorctl" 2>/dev/null||true
+ ( cd "$W"&&unzip -qo vps-monitor.zip >/dev/null 2>&1 )||{ say "$R" '解压失败。';rm -rf "$W";return 1;}
+ chmod +x "$W/install.sh" "$W/menu.sh" "$W/vps-monitorctl" >/dev/null 2>&1||true
  say "$G" '下载和校验通过。';SRC="$W";return 0
 }
 while :;do

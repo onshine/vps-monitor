@@ -26,7 +26,10 @@ install -m 0755 "$ROOT/menu.sh" /usr/local/bin/vps
 if [ ! -f /etc/vps-monitor.env ];then install -m 0600 "$ROOT/vps-monitor.env.example" /etc/vps-monitor.env;sed -i "s/^FORENSICS_MODE=.*/FORENSICS_MODE=$MODE/;s/^FORENSICS_CONSENT=.*/FORENSICS_CONSENT=$CONSENT/" /etc/vps-monitor.env;fi
 chown -R root:root /opt/vps-monitor /var/lib/vps-monitor /etc/vps-monitor.env;chmod 0600 /etc/vps-monitor.env
 systemctl daemon-reload;systemctl enable vps-monitor.service
-if [ -x /usr/local/bin/vps-monitorctl ];then /usr/local/bin/vps-monitorctl repair >/dev/null 2>&1||true;fi
+if [ -x /usr/local/bin/vps-monitorctl ];then
+ /usr/local/bin/vps-monitorctl repair >/dev/null 2>&1||true
+ /usr/local/bin/vps-monitorctl migrate 2>/dev/null||true
+fi
 set -a
 while IFS= read -r ln;do
  case "$ln" in ''|\#*) continue;; esac
