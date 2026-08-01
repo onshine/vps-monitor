@@ -79,5 +79,36 @@ finally:
     try:os.kill(proc.pid,18)
     except Exception:pass
     proc.kill();proc.wait()
+# 早期取证：进程退出后仍须保留命令/容器/镜像等第一手证据
+m.EVIDENCE_CPU=1.0;m.EVIDENCE_MEM=0.0001;m.EVIDENCE_IO=1
+m.DOCKER_MAP["684ab02e4006"]={"name":"relaxed_aryabhata","image":"node:18-alpine"}
+proc=subprocess.Popen([sys.executable,"-c","import time\nwhile True: time.sleep(0.05)"])
+time.sleep(0.4)
+try:
+    st=m.proc_one(proc.pid)[0]
+    snap={"meminfo":{"MemTotal":2<<30},
+          "rates":{proc.pid:{"cpu_pct":95.0,"rss":1<<20,"rss_pct":5.0,"read_Bps":0,"write_Bps":0}}}
+    store={}
+    m.merge_evidence(store,m.capture_evidence(snap,1000.0),1000.0)
+    assert proc.pid in store,"超限进程必须被即时取证"
+finally:
+    proc.kill();proc.wait()
+time.sleep(0.3)
+assert not m.proc_alive(proc.pid,st),"测试前提：进程已退出"
+e=store[proc.pid]
+assert e["cmd"] and "python" in e["cmd"].lower(),e
+assert e["first_seen"]==1000.0
+txt="\n".join(m.evidence_lines(store))
+assert "已退出" in txt and str(proc.pid) in txt,txt
+# 峰值需保留最高值，身份保留最早观测
+m.merge_evidence(store,{proc.pid:{**e,"cpu_pct":20.0,"first_seen":1200.0}},1200.0)
+assert store[proc.pid]["cpu_pct"]==95.0,"应保留峰值"
+assert store[proc.pid]["first_seen"]==1000.0,"应保留最早观测时间"
+# 容器与镜像解析
+store2={};snap2={"meminfo":{"MemTotal":2<<30},"rates":{}}
+assert m.capture_evidence(snap2,1.0)=={}
+blk=m.evidence_block(store)
+assert str(proc.pid) in blk and "首次观测" in blk,blk
+
 assert m.config_check()==0
 print("all tests passed")

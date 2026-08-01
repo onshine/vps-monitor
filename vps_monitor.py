@@ -5,7 +5,7 @@ from collections import deque
 from datetime import datetime
 from pathlib import Path
 
-VERSION="2.6.1"
+VERSION="2.7.0"
 def env(name,default,cast=str):
  try:return cast(os.getenv(name,str(default)))
  except:return default
@@ -167,6 +167,8 @@ def snapshot(pc,pd,pp,dt,scan_proc=True,proc_dt=None):
    if q and v[0]==q[0]:rates[pid]={"read_Bps":max(0,v[1]-q[1])/proc_dt,"write_Bps":max(0,v[2]-q[2])/proc_dt,"cpu_pct":max(0,v[3]-q[3])/CLK/proc_dt*100,"rss":v[4],"rss_pct":100*v[4]/max(1,mi.get("MemTotal",1))}
  fs=fs_usage(); ino=inode_usage()
  return c,ds,ps,{"time":datetime.now().astimezone().isoformat(),"cpu":cpu,"mem":mem,"swap":swap,"meminfo":mi,"disks":disks,"rates":rates,"fs":fs,"inodes":ino}
+EVIDENCE_CPU=max(1,env("EVIDENCE_CPU_MIN",50,float)); EVIDENCE_MEM=max(1,env("EVIDENCE_MEMORY_MIN",15,float))
+EVIDENCE_IO=max(1,env("EVIDENCE_IO_MBPS_MIN",20,float))*1048576; EVIDENCE_TTL=max(60,env("EVIDENCE_TTL_SECONDS",900,int))
 MEM_SUSTAIN=max(0,env("MEMORY_SUSTAIN_SECONDS",120,int))
 _MEM_SINCE={}
 def sustained(key,hit,now,need):
@@ -205,13 +207,56 @@ def fd_lines(pid):
     except:pass
  except:pass
  return out
-def make_report(rs,s):
+def capture_evidence(s,now):
+ """瞬时超限即抓取进程身份，避免短命进程（如 --rm 构建容器）退出后无法取证。"""
+ out={}
+ if not s.get("rates"):return out
+ total=max(1,s["meminfo"].get("MemTotal",1))
+ for pid,r in s["rates"].items():
+  if pid==SELF:continue
+  if not (r["cpu_pct"]>=EVIDENCE_CPU or r["rss_pct"]>=EVIDENCE_MEM
+          or r["read_Bps"]>=EVIDENCE_IO or r["write_Bps"]>=EVIDENCE_IO):continue
+  try:
+   p=enrich(pid,r);c=container_of(p)
+   out[pid]={"first_seen":now,"pid":pid,"uid":p.get("uid","?"),"comm":p.get("comm",""),
+             "cmd":" ".join(redact(p.get("cmd","") or "").split())[:500],"exe":p.get("exe",""),"cwd":p.get("cwd",""),
+             "container":c.get("name",""),"image":c.get("image",""),"cgroup":p.get("cgroup",""),
+             "cpu_pct":r["cpu_pct"],"rss":r["rss"],"rss_pct":r["rss_pct"],
+             "read_Bps":r["read_Bps"],"write_Bps":r["write_Bps"],"total_mem":total}
+  except Exception:pass
+ return out
+def merge_evidence(store,new,now):
+ """保留最早一次观测（第一手证据），同时更新峰值。"""
+ for pid,e in new.items():
+  old=store.get(pid)
+  if old is None:store[pid]=e
+  else:
+   for k in ("cpu_pct","rss","rss_pct","read_Bps","write_Bps"):
+    if e[k]>old[k]:old[k]=e[k]
+   old["last_seen"]=now
+ for pid in list(store):
+  if now-store[pid].get("last_seen",store[pid]["first_seen"])>EVIDENCE_TTL:store.pop(pid,None)
+ return store
+def evidence_lines(store):
+ if not store:return []
+ rows=["","EARLY EVIDENCE (瞬时超限即抓取，不等告警线):"]
+ for e in sorted(store.values(),key=lambda x:max(x["cpu_pct"],x["rss_pct"]),reverse=True)[:TOPN]:
+  cur=proc_one(e["pid"]);alive="存活" if (cur and proc_alive(e["pid"],cur[0])) else "已退出"
+  rows+=["",f"PID {e['pid']} | {e['comm']} | UID {e['uid']} | {alive}",
+         f"首次观测: {datetime.fromtimestamp(e['first_seen']).astimezone().isoformat()}",
+         f"峰值: CPU={e['cpu_pct']:.1f}% RSS={human(e['rss'])}({e['rss_pct']:.1f}%) R={human(e['read_Bps'])}/s W={human(e['write_Bps'])}/s",
+         f"命令: {e['cmd'] or '[kernel thread]'}",f"程序: {e['exe']}",f"工作目录: {e['cwd']}"]
+  if e["container"]:rows.append(f"容器: {e['container']}")
+  if e["image"]:rows.append(f"镜像: {e['image']}")
+ return rows
+def make_report(rs,s,evidence=None):
  now=datetime.now().astimezone(); pids=selected_processes(s); ss=command(["ss","-tunap"],10) if FULL else ""; lines=["VPS SENTINEL INCIDENT REPORT",f"Version: {VERSION}",f"Forensics mode: {'FULL (explicitly authorized)' if FULL else 'BASIC (no sensitive PID/fd/log collection)'}",f"Time: {now.isoformat()}",f"Host: {HOST}","Reasons: "+"; ".join(rs),f"CPU {s['cpu']:.1f}% | Memory {s['mem']:.1f}% | Swap {s['swap']:.1f}%","","BLOCK DEVICE SAMPLE:"]
  for d in sorted(s["disks"],key=lambda x:x["util"],reverse=True):lines.append(f"{d['dev']}: util={d['util']:.1f}% read={human(d['read_Bps'])}/s write={human(d['write_Bps'])}/s rIOPS={d['read_iops']:.1f} wIOPS={d['write_iops']:.1f}")
  lines += ["","TOP PROCESS SAMPLE:"]
  for key in ("read_Bps","write_Bps","cpu_pct","rss"):
   lines.append(f"\n-- top by {key} --")
   for p in sorted(pids,key=lambda x:x[key],reverse=True)[:TOPN]:lines.append(f"PID={p['pid']} UID={p['uid']} {p['comm']} CPU={p['cpu_pct']:.1f}% RSS={human(p['rss'])} R={human(p['read_Bps'])}/s W={human(p['write_Bps'])}/s CMD={p['cmd'][:500]}")
+ lines += evidence_lines(evidence or {})
  lines += ["","PROCESS FORENSICS:"]
  for p in sorted(pids,key=lambda x:max(x["read_Bps"],x["write_Bps"],x["cpu_pct"]*1048576),reverse=True)[:TOPN]:
   net="\n".join(x for x in ss.splitlines() if f"pid={p['pid']}," in x)[:65536] or "[none/unavailable]"
@@ -261,9 +306,21 @@ def offender_block(s):
  if c["name"]:rows.append(f"容器：{c['name']}")
  if c["image"]:rows.append(f"镜像：{c['image']}")
  return "\n".join(rows)
-def send_alert(rs,path,s):
+def evidence_block(store):
+ """优先用最早抓到的身份信息，短命进程退出后仍可展示。"""
+ if not store:return ""
+ e=max(store.values(),key=lambda x:max(x["cpu_pct"],x["rss_pct"],x["read_Bps"]/1048576,x["write_Bps"]/1048576))
+ rows=[f"PID：{e['pid']}",f"程序：{e['comm']}",f"用户：UID {e['uid']}",
+       f"内存：{human(e['rss'])}（宿主机总共 {human(e['total_mem'])}，占 {e['rss_pct']:.1f}%）",
+       f"CPU：{e['cpu_pct']:.1f}%",f"磁盘：读 {human(e['read_Bps'])}/s 写 {human(e['write_Bps'])}/s",
+       f"命令：{e['cmd'] or '[内核线程]'}"]
+ if e["container"]:rows.append(f"容器：{e['container']}")
+ if e["image"]:rows.append(f"镜像：{e['image']}")
+ rows.append(f"首次观测：{datetime.fromtimestamp(e['first_seen']).astimezone().strftime('%H:%M:%S')}")
+ return "\n".join(rows)
+def send_alert(rs,path,s,evidence=None):
  head=f"🚨 {HOST}\n"+"\n".join(rs)+f"\nCPU {s['cpu']:.1f}%｜内存 {s['mem']:.1f}%｜Swap {s['swap']:.1f}%"
- blk=offender_block(s)
+ blk=evidence_block(evidence or {}) or offender_block(s)
  caption=head+("\n\n主要来源\n"+blk if blk else "")+"\n\n完整取证见附件"
  f=common_fields();f["caption"]=caption[:1024];ok,why=telegram("sendDocument",f,path)
  if not ok:
@@ -445,7 +502,7 @@ def config_check():
   print("ERROR: "+"; ".join(errors),file=sys.stderr);return 1
  return 0
 def main():
- print(f"VPS Sentinel {VERSION} started host={HOST} pid={SELF} interval={INTERVAL}s",flush=True); cleanup(); pc=cpu_raw();pd=disks_raw();pp=procs_raw() if FULL else {};last=time.monotonic();last_proc=last;last_metric=0;bad=good=0;active=False;last_alert=0;candidate_key=None;candidate_hits=0;pending_report=None
+ print(f"VPS Sentinel {VERSION} started host={HOST} pid={SELF} interval={INTERVAL}s",flush=True); cleanup(); pc=cpu_raw();pd=disks_raw();pp=procs_raw() if FULL else {};last=time.monotonic();last_proc=last;last_metric=0;bad=good=0;active=False;last_alert=0;candidate_key=None;candidate_hits=0;pending_report=None;evidence={}
  while True:
   target=last+INTERVAL;time.sleep(max(0,target-time.monotonic()));now=time.monotonic();dt=max(.1,now-last);scan=FULL and now-last_proc>=PROC_INTERVAL*.95
   try:
@@ -453,6 +510,7 @@ def main():
    audit_self(time.monotonic()-now)
    if scan:pp=np;last_proc=now
    rs=reasons(s,now);pending_report=None
+   merge_evidence(evidence,capture_evidence(s,time.time()),time.time())
    if METRICS_INTERVAL and now-last_metric>=METRICS_INTERVAL:metric(s);last_metric=now
    p,kind=action_candidate(s,rs)
    if p:
@@ -461,7 +519,7 @@ def main():
     else:candidate_key=key;candidate_hits=1
     if candidate_hits>=ACTION_CONSEC:
      stage="throttle" if (THROTTLE_FIRST and candidate_hits<ACTION_CONSEC+ESCALATE) else "terminate"
-     shared=make_report(rs or [f"自动处置（{kind}）"],s)
+     shared=make_report(rs or [f"自动处置（{kind}）"],s,evidence)
      acted,result=act_on_process(p,kind,s,stage,shared);print(f"AUTO_ACTION pid={p['pid']} kind={kind} stage={stage} acted={acted} result={result}",flush=True)
      if acted:pending_report=shared
      if stage=="terminate" or not acted:candidate_key=None;candidate_hits=0
@@ -469,7 +527,7 @@ def main():
    if rs:
     bad+=1;good=0
     if bad>=CONSEC and (not active or time.time()-last_alert>=COOLDOWN):
-     path=pending_report or make_report(rs,s);ok,why=send_alert(rs,path,s);print(f"ALERT {'; '.join(rs)} report={path} telegram={ok} {why}",flush=True);active=True;last_alert=time.time();cleanup()
+     path=pending_report or make_report(rs,s,evidence);ok,why=send_alert(rs,path,s,evidence);print(f"ALERT {'; '.join(rs)} report={path} telegram={ok} {why}",flush=True);active=True;last_alert=time.time();cleanup()
    else:
     bad=0;good+=1
     if active and good>=RECOVERY:send_message(f"✅ <b>VPS 已恢复</b>\n主机：<code>{html.escape(HOST)}</code>\nCPU {s['cpu']:.1f}%｜内存 {s['mem']:.1f}%｜Swap {s['swap']:.1f}%");active=False;print("RECOVERED",flush=True)
