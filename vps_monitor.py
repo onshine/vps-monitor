@@ -5,7 +5,7 @@ from collections import deque
 from datetime import datetime
 from pathlib import Path
 
-VERSION="2.7.0"
+VERSION="2.7.1"
 def env(name,default,cast=str):
  try:return cast(os.getenv(name,str(default)))
  except:return default
@@ -222,7 +222,8 @@ def capture_evidence(s,now):
              "cmd":" ".join(redact(p.get("cmd","") or "").split())[:500],"exe":p.get("exe",""),"cwd":p.get("cwd",""),
              "container":c.get("name",""),"image":c.get("image",""),"cgroup":p.get("cgroup",""),
              "cpu_pct":r["cpu_pct"],"rss":r["rss"],"rss_pct":r["rss_pct"],
-             "read_Bps":r["read_Bps"],"write_Bps":r["write_Bps"],"total_mem":total}
+             "read_Bps":r["read_Bps"],"write_Bps":r["write_Bps"],"total_mem":total,
+             "acted_by_monitor":""}
   except Exception:pass
  return out
 def merge_evidence(store,new,now):
@@ -241,7 +242,11 @@ def evidence_lines(store):
  if not store:return []
  rows=["","EARLY EVIDENCE (瞬时超限即抓取，不等告警线):"]
  for e in sorted(store.values(),key=lambda x:max(x["cpu_pct"],x["rss_pct"]),reverse=True)[:TOPN]:
-  cur=proc_one(e["pid"]);alive="存活" if (cur and proc_alive(e["pid"],cur[0])) else "已退出"
+  cur=proc_one(e["pid"]);live=bool(cur and proc_alive(e["pid"],cur[0]))
+  act=e.get("acted_by_monitor","")
+  if live:alive="存活（已被监控降级：%s）"%act if act else "存活"
+  elif act:alive="已退出（监控处置：%s）"%act
+  else:alive="已退出（非监控处置，退因未知）"
   rows+=["",f"PID {e['pid']} | {e['comm']} | UID {e['uid']} | {alive}",
          f"首次观测: {datetime.fromtimestamp(e['first_seen']).astimezone().isoformat()}",
          f"峰值: CPU={e['cpu_pct']:.1f}% RSS={human(e['rss'])}({e['rss_pct']:.1f}%) R={human(e['read_Bps'])}/s W={human(e['write_Bps'])}/s",
@@ -388,7 +393,7 @@ def throttle(p,kind):
   try:os.kill(pid,19);done.append("SIGSTOP冻结")
   except Exception as e:done.append(f"冻结失败:{e}")
  return ",".join(done) or "无可用降级手段"
-def act_on_process(p,kind,s,stage="throttle",report=None):
+def act_on_process(p,kind,s,stage="throttle",report=None,evidence=None):
  now=time.time();pid=p["pid"];start=p["starttime"]
  if protected(p):return False,"进程在保护/豁免名单中，已放行"
  if recent_actions(now)>=ACTION_HOURLY:return False,"每小时动作上限已触发"
@@ -410,6 +415,7 @@ def act_on_process(p,kind,s,stage="throttle",report=None):
  after=post_metrics()
  row={"epoch":now,"time":datetime.now().astimezone().isoformat(),"host":HOST,"trigger":kind,"stage":stage,"pid":pid,"starttime":start,"comm":p.get("comm"),"uid":p.get("uid"),"cmd":cmd,"exe":p.get("exe"),"container":cinfo.get("name",""),"image":cinfo.get("image",""),"action":action,"result":result,"before":before,"after":after,"process":{"cpu_pct":p["cpu_pct"],"rss":p["rss"],"rss_pct":p["rss_pct"],"read_Bps":p["read_Bps"],"write_Bps":p["write_Bps"]}}
  log_action(row)
+ if evidence is not None and pid in evidence:evidence[pid]["acted_by_monitor"]=action
  if report is None:
   try:report=make_report([f"自动处置（{kind}）"],s)
   except Exception:report=None
@@ -520,7 +526,7 @@ def main():
     if candidate_hits>=ACTION_CONSEC:
      stage="throttle" if (THROTTLE_FIRST and candidate_hits<ACTION_CONSEC+ESCALATE) else "terminate"
      shared=make_report(rs or [f"自动处置（{kind}）"],s,evidence)
-     acted,result=act_on_process(p,kind,s,stage,shared);print(f"AUTO_ACTION pid={p['pid']} kind={kind} stage={stage} acted={acted} result={result}",flush=True)
+     acted,result=act_on_process(p,kind,s,stage,shared,evidence);print(f"AUTO_ACTION pid={p['pid']} kind={kind} stage={stage} acted={acted} result={result}",flush=True)
      if acted:pending_report=shared
      if stage=="terminate" or not acted:candidate_key=None;candidate_hits=0
    else:candidate_key=None;candidate_hits=0

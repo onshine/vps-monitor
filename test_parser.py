@@ -110,5 +110,19 @@ assert m.capture_evidence(snap2,1.0)=={}
 blk=m.evidence_block(store)
 assert str(proc.pid) in blk and "首次观测" in blk,blk
 
+# 监控处置需在证据中留痕，且不被后续采样覆盖
+store3={};snapA={"meminfo":{"MemTotal":2<<30},
+  "rates":{4242:{"cpu_pct":95.0,"rss":1<<20,"rss_pct":5.0,"read_Bps":0,"write_Bps":0}}}
+m.merge_evidence(store3,{4242:{"first_seen":10.0,"pid":4242,"uid":"0","comm":"x","cmd":"x","exe":"","cwd":"",
+  "container":"","image":"","cgroup":"","cpu_pct":95.0,"rss":1<<20,"rss_pct":5.0,
+  "read_Bps":0,"write_Bps":0,"total_mem":2<<30,"acted_by_monitor":""}},10.0)
+store3[4242]["acted_by_monitor"]="SIGTERM"
+m.merge_evidence(store3,{4242:{**store3[4242],"acted_by_monitor":"","cpu_pct":10.0}},20.0)
+assert store3[4242]["acted_by_monitor"]=="SIGTERM","处置标记不得被后续采样覆盖"
+txt3="\n".join(m.evidence_lines(store3))
+assert "监控处置：SIGTERM" in txt3,txt3
+store3[4242]["acted_by_monitor"]=""
+assert "非监控处置" in "\n".join(m.evidence_lines(store3))
+
 assert m.config_check()==0
 print("all tests passed")
