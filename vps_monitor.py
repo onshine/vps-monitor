@@ -5,7 +5,7 @@ from collections import deque
 from datetime import datetime
 from pathlib import Path
 
-VERSION="2.7.1"
+VERSION="2.8.0"
 def env(name,default,cast=str):
  try:return cast(os.getenv(name,str(default)))
  except:return default
@@ -29,6 +29,7 @@ ESCALATE=max(0,env("AUTO_ACTION_ESCALATE_AFTER",6,int))
 PROC_CPU_MIN=max(1,env("AUTO_ACTION_PROCESS_CPU_MIN",70,float)); PROC_MEM_MIN=max(1,env("AUTO_ACTION_PROCESS_MEMORY_MIN",25,float)); PROC_READ_MIN=max(1,env("AUTO_ACTION_PROCESS_READ_MBPS_MIN",10,float))*1048576; PROC_WRITE_MIN=max(1,env("AUTO_ACTION_PROCESS_WRITE_MBPS_MIN",10,float))*1048576
 PROTECTED={x.strip() for x in os.getenv("AUTO_ACTION_PROTECTED_NAMES","systemd,sshd,ssh,init,kthreadd,kworker,rcu_sched,systemd-journal,systemd-udevd,dbus-daemon,cron,containerd,dockerd,mysqld,mariadbd,postgres,redis-server,mongod").split(",") if x.strip()}
 PROTECTED_CMD=[x.strip().lower() for x in os.getenv("AUTO_ACTION_PROTECTED_CMDLINE","vite build,npm run build,npm install,npm ci,docker build,apt-get,dpkg,mysqldump").split(",") if x.strip()]
+PROTECTED_CT={x.strip().lower() for x in os.getenv("AUTO_ACTION_PROTECTED_CONTAINERS","alist-tvbox,xiaoya-tvbox").split(",") if x.strip()}
 ACTION_LOG=DATA/"actions.jsonl"; ACTION_LOG_WARN=100*1048576
 PAGE=os.sysconf("SC_PAGE_SIZE"); CLK=os.sysconf(os.sysconf_names["SC_CLK_TCK"]); SELF=os.getpid()
 MODE=os.getenv("FORENSICS_MODE","basic").lower(); CONSENT=os.getenv("FORENSICS_CONSENT","") == "YES"; FULL=MODE == "full" and CONSENT
@@ -340,6 +341,10 @@ def protected(p):
  if p["pid"] in (0,1,SELF) or not p.get("cmd"):return True
  name=p.get("comm","");exe=os.path.basename(p.get("exe","")).strip();cmd=p.get("cmd","").lower()
  if any(k in cmd for k in PROTECTED_CMD):return True
+ if PROTECTED_CT:
+  c=container_of(p)
+  if c.get("name") and c["name"].lower() in PROTECTED_CT:return True
+  if c.get("image") and any(i in c["image"].lower() for i in PROTECTED_CT):return True
  return name in PROTECTED or exe in PROTECTED or any(name.startswith(x) for x in ("kworker","migration","watchdog","rcu_","ksoftirqd"))
 def action_candidate(s,rs):
  if AUTO_ACTION=="none" or not AUTO_CONSENT or not FULL:return None,None

@@ -124,5 +124,15 @@ assert "监控处置：SIGTERM" in txt3,txt3
 store3[4242]["acted_by_monitor"]=""
 assert "非监控处置" in "\n".join(m.evidence_lines(store3))
 
+# 按容器名/镜像豁免：java、python 等通用进程名无法靠命令行安全豁免
+m.DOCKER_MAP["aaaaaaaaaaaa"]={"name":"alist-tvbox","image":"haroldli/alist-tvbox:latest"}
+m.DOCKER_MAP["bbbbbbbbbbbb"]={"name":"xiaoya-tvbox","image":"haroldli/xiaoya-tvbox:latest"}
+m.DOCKER_MAP["cccccccccccc"]={"name":"other-svc","image":"someone/other:latest"}
+def CG(x):return "0::/system.slice/docker-%s.scope"%(x*1)
+assert m.protected({"pid":7001,"comm":"java","cmd":"java -jar app.jar","exe":"/usr/bin/java","cgroup":CG("aaaaaaaaaaaa")}),"alist-tvbox 应豁免"
+assert m.protected({"pid":7002,"comm":"python3","cmd":"python3 main.py","exe":"","cgroup":CG("bbbbbbbbbbbb")}),"xiaoya-tvbox 应豁免"
+assert not m.protected({"pid":7003,"comm":"java","cmd":"java -jar evil.jar","exe":"","cgroup":CG("cccccccccccc")}),"未列入的容器不应豁免"
+assert not m.protected({"pid":7004,"comm":"java","cmd":"java -jar app.jar","exe":"","cgroup":"0::/system.slice/sshd.service"}),"宿主机 java 不应因容器名单豁免"
+
 assert m.config_check()==0
 print("all tests passed")

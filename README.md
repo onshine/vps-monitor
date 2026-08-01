@@ -210,6 +210,7 @@ Telegram 配置中的两个可选变量：
 | `MAX_REPORT_SIZE_MB` | `5` | 单报告最大值 |
 | `AUTO_ACTION_PROTECTED_NAMES` | 系统与数据库 | 永不处置的程序名 |
 | `AUTO_ACTION_PROTECTED_CMDLINE` | 少量构建命令 | 命令行含这些关键字的进程只告警、不处置 |
+| `AUTO_ACTION_PROTECTED_CONTAINERS` | `alist-tvbox,xiaoya-tvbox` | 按容器名或镜像豁免，适合通用进程名的容器服务 |
 | `MEMORY_SUSTAIN_SECONDS` | `120` | 内存/Swap 需连续超限达到该秒数才告警 |
 | `REDACT_SECRETS` | `true` | 报告与通知中自动隐藏疑似 Token、密钥、密码 |
 
@@ -429,6 +430,50 @@ docker build, apt-get, dpkg, mysqldump
 ```
 
 名单按命令行子串匹配，范围越大越容易被伪装绕过，所以不再默认包含 `tar`、`rsync`、`gcc`、`make` 等通用命令。需要时自行追加。
+
+### 添加白名单
+
+查看当前全部豁免规则：
+
+```bash
+sudo vps-monitorctl show-allow
+```
+
+**按命令关键字豁免**，适合有明确特征的命令：
+
+```bash
+sudo vps-monitorctl allow "my-build.sh"
+```
+
+```bash
+sudo vps-monitorctl allow "yarn build"
+```
+
+匹配方式是命令行子串，不区分大小写。关键字越具体越安全。
+
+**按容器名或镜像豁免**，适合 `java`、`python3`、`node` 这类通用进程名的容器化服务：
+
+```bash
+sudo vps-monitorctl allow-container alist-tvbox
+```
+
+```bash
+sudo vps-monitorctl allow-container haroldli/xiaoya-tvbox
+```
+
+同时匹配容器名和镜像名。容器内所有进程都会被豁免，宿主机上的同名进程不受影响。
+
+**为什么需要两种方式**：像 alist-tvbox 这类服务，容器内跑的是 `java -jar`，如果按命令关键字加 `java`，你机器上所有 Java 服务都会一起免疫。按容器名豁免则精确限定在这一个容器内。
+
+恢复默认名单（命令与容器同时重置）：
+
+```bash
+sudo vps-monitorctl reset-allow
+```
+
+也可以在菜单里操作：`vps` → `4` → `4` → `6`。
+
+**白名单只影响自动处置，不影响告警。** 被豁免的进程仍会触发告警并推送取证报告，只是不会被降级或终止。
 
 查看当前名单：
 
