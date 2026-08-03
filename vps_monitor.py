@@ -5,7 +5,7 @@ from collections import deque
 from datetime import datetime
 from pathlib import Path
 
-VERSION="2.11.0"
+VERSION="2.11.1"
 def env(name,default,cast=str):
  try:return cast(os.getenv(name,str(default)))
  except:return default
@@ -287,6 +287,14 @@ def make_report(rs,s,evidence=None):
   lines.append(f"\n-- top by {key} --")
   for p in sorted(pids,key=lambda x:x[key],reverse=True)[:TOPN]:lines.append(f"PID={p['pid']} UID={p['uid']} {p['comm']} CPU={p['cpu_pct']:.1f}% RSS={human(p['rss'])} R={human(p['read_Bps'])}/s W={human(p['write_Bps'])}/s CMD={p['cmd'][:500]}")
  lines += evidence_lines(evidence or {})
+ try:
+  bstate="让路中（已限速部分容器）" if os.path.exists("/var/lib/vps-monitor/build-mode.state") else "未让路"
+  lines += ["",f"BUILD MODE: 自动检测={'开启' if AUTO_BUILD_MODE else '关闭'}｜当前状态={bstate}"]
+  if AUTO_BUILD_MODE:
+   b=detect_build(s)
+   if b:lines.append(f"  检测结果: 命中 {b['pattern']}（PID {b['pid']}，CPU {b['cpu_pct']:.1f}%）")
+   else:lines.append("  检测结果: 未检测到构建进程")
+ except Exception as e:lines += ["",f"BUILD MODE: 状态读取失败 {e}"]
  lines += ["","PROCESS FORENSICS:"]
  for p in sorted(pids,key=lambda x:max(x["read_Bps"],x["write_Bps"],x["cpu_pct"]*1048576),reverse=True)[:TOPN]:
   net="\n".join(x for x in ss.splitlines() if f"pid={p['pid']}," in x)[:65536] or "[none/unavailable]"

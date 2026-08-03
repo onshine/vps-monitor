@@ -7,10 +7,11 @@ if [ -t 1 ];then G='\033[1;32m';Y='\033[1;33m';R='\033[1;31m';N='\033[0m';else G
 say(){ printf '%b%s%b\n' "$1" "$2" "$N";}
 need_docker(){ command -v docker >/dev/null 2>&1||{ say "$R" '未检测到 docker。';exit 1;}; }
 # 默认在构建期让路的容器（通常是可容忍变慢的后台服务）
-DEFAULT_TARGETS='alist-tvbox xiaoya-tvbox betterforward homedir'
+DEFAULT_TARGETS='alist-tvbox xiaoya-tvbox bemby'
 # 让路时每个容器的 CPU 上限（核）与内存上限
+# 内存默认不动（避免低于实际用量导致 OOM），仅限 CPU；需要时用 BUILD_MODE_MEM 显式指定
 LIMIT_CPUS="${BUILD_MODE_CPUS:-0.3}"
-LIMIT_MEM="${BUILD_MODE_MEM:-256m}"
+LIMIT_MEM="${BUILD_MODE_MEM:-}"
 
 running(){ docker ps --format '{{.Names}}' 2>/dev/null; }
 targets(){
@@ -26,15 +27,19 @@ enter(){
  tl=$(targets)
  [ -n "$tl" ]||{ say "$Y" '没有可让路的目标容器在运行。';exit 0;}
  : >"$STATE"
- say "$G" "进入构建让路模式，CPU 上限 ${LIMIT_CPUS} 核 / 内存 ${LIMIT_MEM}："
+ if [ -n "$LIMIT_MEM" ];then
+  say "$G" "进入构建让路模式，CPU 上限 ${LIMIT_CPUS} 核 / 内存 ${LIMIT_MEM}："
+ else
+  say "$G" "进入构建让路模式，CPU 上限 ${LIMIT_CPUS} 核（内存不变，避免 OOM）："
+ fi
  for c in $tl;do
   oc=$(docker inspect "$c" --format '{{.HostConfig.NanoCpus}}' 2>/dev/null||echo 0)
   om=$(docker inspect "$c" --format '{{.HostConfig.Memory}}' 2>/dev/null||echo 0)
   printf '%s\t%s\t%s\n' "$c" "$oc" "$om" >>"$STATE"
-  if docker update --cpus "$LIMIT_CPUS" --memory "$LIMIT_MEM" --memory-swap "$LIMIT_MEM" "$c" >/dev/null 2>&1;then
-   say "$G" "  ✓ $c 已限速"
+  if [ -n "$LIMIT_MEM" ]&&docker update --cpus "$LIMIT_CPUS" --memory "$LIMIT_MEM" --memory-swap "$LIMIT_MEM" "$c" >/dev/null 2>&1;then
+   say "$G" "  ✓ $c 已限 CPU 与内存"
   elif docker update --cpus "$LIMIT_CPUS" "$c" >/dev/null 2>&1;then
-   say "$G" "  ✓ $c 已限 CPU（内存限制跳过）"
+   say "$G" "  ✓ $c 已限 CPU ${LIMIT_CPUS} 核"
   else
    say "$R" "  ✗ $c 限速失败"
   fi
@@ -74,7 +79,12 @@ pin_container(){
  need_docker
  cn=$1;cpus=$2;mem=$3
  if [ -z "$cn" ]||[ -z "$cpus" ]||[ -z "$mem" ];then say "$R" '用法：vps-build-mode pin <容器> <CPU核> <内存>';say "$Y" '例：sudo vps-build-mode pin alist-tvbox 0.5 512m';return 1;fi
- if ! docker inspect "$cn" >/dev/null 2>&1;then say "$R" "容器不存在：$cn";return 1;fi
+ if ! docker inspect "$cn" >/dev/null 2>&1;then
+  say "$R" "容器不存在：$cn"
+  say "$Y" '当前运行中的容器：'
+  docker ps --format '  {{.Names}}' 2>/dev/null
+  return 1
+ fi
  cur=$(docker stats --no-stream --format '{{.MemUsage}}' "$cn" 2>/dev/null|cut -d/ -f1|tr -d ' ')
  say "$Y" "当前内存用量：${cur:-未知}。若设定值低于实际用量，容器会被内核 OOM 杀掉。"
  if docker update --cpus "$cpus" --memory "$mem" --memory-swap "$mem" "$cn" >/dev/null 2>&1;then
