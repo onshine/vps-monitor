@@ -5,7 +5,7 @@ from collections import deque
 from datetime import datetime
 from pathlib import Path
 
-VERSION="2.12.0"
+VERSION="2.13.0"
 def env(name,default,cast=str):
  try:return cast(os.getenv(name,str(default)))
  except:return default
@@ -143,6 +143,7 @@ AUTO_BUILD_MODE=os.getenv("AUTO_BUILD_MODE","false").lower() in ("1","true","yes
 BUILD_PATTERNS=[x.strip().lower() for x in os.getenv("BUILD_DETECT_CMDLINE","vite build,npm run build,npm ci,yarn build,pnpm build,webpack,next build,nuxt build").split(",") if x.strip()]
 BUILD_CPU_MIN=max(1,env("BUILD_DETECT_CPU_MIN",40,float))
 BUILD_EXIT_GRACE=max(10,env("BUILD_EXIT_GRACE_SECONDS",60,int))
+PIN_CHECK=max(0,env("PINNED_LIMIT_CHECK_SECONDS",120,int))
 def detect_build(s):
  """识别正在进行的前端/后端构建：命令行匹配且 CPU 占用显著。"""
  if not s.get("rates"):return None
@@ -577,7 +578,7 @@ def config_check():
   print("ERROR: "+"; ".join(errors),file=sys.stderr);return 1
  return 0
 def main():
- print(f"VPS Sentinel {VERSION} started host={HOST} pid={SELF} interval={INTERVAL}s",flush=True); cleanup(); pc=cpu_raw();pd=disks_raw();pp=procs_raw() if FULL else {};last=time.monotonic();last_proc=last;last_metric=0;bad=good=0;active=False;last_alert=0;candidate_key=None;candidate_hits=0;pending_report=None;evidence={};build_active=False;build_gone=0
+ print(f"VPS Sentinel {VERSION} started host={HOST} pid={SELF} interval={INTERVAL}s",flush=True); cleanup(); pc=cpu_raw();pd=disks_raw();pp=procs_raw() if FULL else {};last=time.monotonic();last_proc=last;last_metric=0;bad=good=0;active=False;last_alert=0;candidate_key=None;candidate_hits=0;pending_report=None;evidence={};build_active=False;build_gone=0;last_pin=0
  while True:
   target=last+INTERVAL;time.sleep(max(0,target-time.monotonic()));now=time.monotonic();dt=max(.1,now-last);scan=FULL and now-last_proc>=PROC_INTERVAL*.95
   try:
@@ -586,6 +587,9 @@ def main():
    if scan:pp=np;last_proc=now
    rs=reasons(s,now);pending_report=None
    merge_evidence(evidence,capture_evidence(s,time.time()),time.time())
+   if PIN_CHECK and now-last_pin>=PIN_CHECK:
+    last_pin=now
+    if (DATA/"pinned-limits.tsv").exists():build_mode_cmd("reapply")
    if AUTO_BUILD_MODE:
     b=detect_build(s)
     if b and not build_active:

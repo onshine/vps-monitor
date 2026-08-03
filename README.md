@@ -410,7 +410,29 @@ sudo vps-build-mode unpin alist-tvbox
 > ```bash
 > docker stats --no-stream alist-tvbox
 > ```
-> 例如 alist-tvbox 是 Java 应用，JVM 参数常见 `-Xmx512M`，常态占用 280–300MiB，那么内存至少给 `512m`，给 `256m` 会导致容器无法启动。
+> 对 JVM 应用要留足非堆开销：若启动参数是 `-Xmx512M`，容器限额应给 `768m` 左右（约 1.4–1.5 倍），只给 `512m` 会在堆接近上限时被杀。
+
+限额会被记录下来。**容器被删除重建后（例如运行上游的一键更新脚本），监控会在下次巡检时自动恢复限额**，无需手动重设。
+
+查看已记录的限额：
+
+```bash
+sudo vps-build-mode pins
+```
+
+立即触发一次恢复检查：
+
+```bash
+sudo vps-build-mode reapply
+```
+
+巡检间隔默认 120 秒，可调整或关闭：
+
+```ini
+PINNED_LIMIT_CHECK_SECONDS="120"
+```
+
+`unpin` 会同时清除记录，之后不再自动恢复。
 
 自定义让路的容器和限额，用环境变量：
 

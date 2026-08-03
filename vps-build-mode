@@ -3,6 +3,7 @@
 # 把资源让给前端构建；构建结束后一键恢复。全程可逆，不杀进程、不丢数据。
 set -eu
 STATE=/var/lib/vps-monitor/build-mode.state
+PINS=/var/lib/vps-monitor/pinned-limits.tsv
 if [ -t 1 ];then G='\033[1;32m';Y='\033[1;33m';R='\033[1;31m';N='\033[0m';else G=;Y=;R=;N=;fi
 say(){ printf '%b%s%b\n' "$1" "$2" "$N";}
 need_docker(){ command -v docker >/dev/null 2>&1||{ say "$R" '未检测到 docker。';exit 1;}; }
@@ -88,19 +89,42 @@ pin_container(){
  cur=$(docker stats --no-stream --format '{{.MemUsage}}' "$cn" 2>/dev/null|cut -d/ -f1|tr -d ' ')
  say "$Y" "当前内存用量：${cur:-未知}。若设定值低于实际用量，容器会被内核 OOM 杀掉。"
  if docker update --cpus "$cpus" --memory "$mem" --memory-swap "$mem" "$cn" >/dev/null 2>&1;then
+  # 持久化：容器被删除重建后（如运行上游更新脚本）自动恢复该限额
+  touch "$PINS";tmp=$(mktemp)
+  grep -v "^${cn}	" "$PINS" >"$tmp" 2>/dev/null||true
+  printf '%s\t%s\t%s\n' "$cn" "$cpus" "$mem" >>"$tmp"
+  mv "$tmp" "$PINS";chmod 600 "$PINS"
   say "$G" "已为 $cn 设置常驻限额：${cpus} 核 / ${mem}"
-  say "$Y" 'docker compose 重建会丢失，需写入 compose 文件：'
-  printf '  cpus: %s\n  mem_limit: %s\n' "$cpus" "$mem"
+  say "$G" '已记录，容器重建后会自动恢复此限额。'
  else
   say "$R" "设置失败：$cn（内存值可能低于容器实际需求）";return 1
  fi
+}
+reapply_pins(){
+ # 检查已记录的限额是否仍生效；容器重建会清空 HostConfig，此时自动补回
+ [ -f "$PINS" ]||exit 0
+ command -v docker >/dev/null 2>&1||exit 0
+ while IFS='	' read -r cn cpus mem;do
+  [ -n "$cn" ]||continue
+  docker inspect "$cn" >/dev/null 2>&1||continue
+  cur=$(docker inspect "$cn" --format '{{.HostConfig.Memory}}' 2>/dev/null||echo 0)
+  [ "${cur:-0}" = 0 ]||continue
+  if docker update --cpus "$cpus" --memory "$mem" --memory-swap "$mem" "$cn" >/dev/null 2>&1;then
+   say "$G" "已自动恢复 $cn 的常驻限额：${cpus} 核 / ${mem}"
+  else
+   say "$R" "自动恢复失败：$cn"
+  fi
+ done <"$PINS"
 }
 unpin_container(){
  need_docker
  cn=$1
  if [ -z "$cn" ];then say "$R" '用法：vps-build-mode unpin <容器>';return 1;fi
  if docker update --cpus 0 --memory 0 --memory-swap 0 "$cn" >/dev/null 2>&1;then
-  say "$G" "已取消 $cn 的常驻限额"
+  if [ -f "$PINS" ];then
+   tmp=$(mktemp);grep -v "^${cn}	" "$PINS" >"$tmp" 2>/dev/null||true;mv "$tmp" "$PINS";chmod 600 "$PINS"
+  fi
+  say "$G" "已取消 $cn 的常驻限额（记录已清除，不会再自动恢复）"
  else say "$R" "操作失败：$cn";return 1;fi
 }
 apply_request(){
@@ -111,6 +135,7 @@ apply_request(){
  case "$action" in
   enter) enter;;
   exit) leave;;
+  reapply) reapply_pins;;
   *) say "$R" "未知请求：$action";exit 1;;
  esac
 }
@@ -121,5 +146,10 @@ case "${1:-status}" in
  pin) need_root;pin_container "${2:-}" "${3:-}" "${4:-}";;
  unpin) need_root;unpin_container "${2:-}";;
  apply-request) apply_request;;
- *) echo '用法：vps-build-mode {enter|exit|status|pin <容器> <CPU核> <内存>|unpin <容器>}';exit 1;;
+ reapply) need_root;reapply_pins;;
+ pins) if [ -f "$PINS" ];then
+        say "$G" '已记录的常驻限额（容器重建后自动恢复）：'
+        while IFS='	' read -r c p m;do printf '  %s: %s 核 / %s\n' "$c" "$p" "$m";done <"$PINS"
+       else say "$Y" '暂无常驻限额记录。';fi;;
+ *) echo '用法：vps-build-mode {enter|exit|status|pin <容器> <CPU核> <内存>|unpin <容器>|pins|reapply}';exit 1;;
 esac
