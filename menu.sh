@@ -26,10 +26,12 @@ while :;do
  say "$G" '3. 查看现有配置和权限'
  say "$G" '4. 修改现有配置和权限'
  say "$G" '5. 查看脚本进程日志（最近 10 条）'
- say "$R" '6. 删除脚本进程日志'
- say "$R" '7. 一键卸载'
+ say "$Y" '6. 构建让路模式（构建前限速其他容器，构建后恢复）'
+ say "$G" '7. 容器资源限制（CPU / 内存）'
+ say "$R" '8. 删除脚本进程日志'
+ say "$R" '9. 一键卸载'
  say "$G" '0. 退出脚本'
- ask "$G" '请输入选项 [0-7]：'
+ ask "$G" '请输入选项 [0-9]：'
  case "$REPLY" in
   1) if installed;then
       say "$Y" '已安装，请选择 2 更新。'
@@ -44,9 +46,17 @@ while :;do
   3) if installed;then rootrun /usr/local/bin/vps-monitorctl show-config;hold;else say "$Y" '尚未安装。';fi;;
   4) if installed;then if rootrun /usr/local/bin/vps-monitorctl configure;then :;else rc=$?;[ "$rc" = 20 ]&&bye;fi;else say "$Y" '尚未安装。';fi;;
   5) if installed;then rootrun /usr/local/bin/vps-monitorctl logs 10;hold;else say "$Y" '尚未安装。';fi;;
-  6) if installed;then rootrun /usr/local/bin/vps-monitorctl delete-log;else say "$Y" '尚未安装。';fi;;
-  7) if installed;then rootrun /usr/local/bin/vps-monitorctl uninstall;say "$Y" "如需重新安装，请运行：$BOOT";else say "$Y" '尚未安装。';fi;;
+  6) if installed;then
+      rootrun /usr/local/bin/vps-build-mode status
+      say "$Y" 'a. 开启让路（构建前）   b. 关闭并恢复（构建后）   其他键返回'
+      ask "$G" '请选择：'
+      case "$REPLY" in a|A) rootrun /usr/local/bin/vps-build-mode enter;;b|B) rootrun /usr/local/bin/vps-build-mode exit;;esac
+      hold
+     else say "$Y" '尚未安装。';fi;;
+  7) if installed;then rootrun /usr/local/bin/vps-monitorctl containers||true;else say "$Y" '尚未安装。';fi;;
+  8) if installed;then rootrun /usr/local/bin/vps-monitorctl delete-log;else say "$Y" '尚未安装。';fi;;
+  9) if installed;then rootrun /usr/local/bin/vps-monitorctl uninstall;say "$Y" "如需重新安装，请运行：$BOOT";else say "$Y" '尚未安装。';fi;;
   0) bye;;
-  *) say "$R" '无效选项，请输入 0–7。';;
+  *) say "$R" '无效选项，请输入 0–9。';;
  esac
 done

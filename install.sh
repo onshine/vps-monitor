@@ -23,6 +23,7 @@ install -m 0555 "$ROOT/vps_monitor.py" /opt/vps-monitor/vps_monitor.py;install -
 install -m 0644 "$ROOT/vps-monitor.service" /etc/systemd/system/vps-monitor.service
 install -m 0755 "$ROOT/vps-monitorctl" /usr/local/bin/vps-monitorctl
 install -m 0755 "$ROOT/menu.sh" /usr/local/bin/vps
+install -m 0755 "$ROOT/vps-build-mode" /usr/local/bin/vps-build-mode
 if [ ! -f /etc/vps-monitor.env ];then install -m 0600 "$ROOT/vps-monitor.env.example" /etc/vps-monitor.env;sed -i "s/^FORENSICS_MODE=.*/FORENSICS_MODE=$MODE/;s/^FORENSICS_CONSENT=.*/FORENSICS_CONSENT=$CONSENT/" /etc/vps-monitor.env;fi
 chown -R root:root /opt/vps-monitor /var/lib/vps-monitor /etc/vps-monitor.env;chmod 0600 /etc/vps-monitor.env
 systemctl daemon-reload;systemctl enable vps-monitor.service

@@ -135,4 +135,22 @@ assert not m.protected({"pid":7003,"comm":"java","cmd":"java -jar evil.jar","exe
 assert not m.protected({"pid":7004,"comm":"java","cmd":"java -jar app.jar","exe":"","cgroup":"0::/system.slice/sshd.service"}),"宿主机 java 不应因容器名单豁免"
 
 assert m.config_check()==0
+# 告警需说明受保护原因并给出可执行建议
+m.DOCKER_MAP["dddd"]={"name":"1Panel-mysql-Cf2q","image":"mysql:8.4.10"}
+e={"pid":999,"comm":"mysqld","uid":"999","cmd":"mysqld","exe":"/usr/sbin/mysqld",
+   "cgroup":"0::/system.slice/docker-dddd.scope","container":"1Panel-mysql-Cf2q","image":"mysql:8.4.10",
+   "rss":1<<20,"rss_pct":9.8,"read_Bps":0,"write_Bps":0,"cpu_pct":94.8,"total_mem":2<<30,
+   "first_seen":1000.0,"acted_by_monitor":""}
+assert m.why_protected(e)=="受保护程序名：mysqld",m.why_protected(e)
+tips=m.advise(e,{"cpu":100.0})
+assert any("docker update --cpus" in t for t in tips),tips
+assert any("vps-build-mode enter" in t for t in tips),tips
+blk=m.evidence_block({999:e},{"cpu":100.0,"mem":59.0,"swap":49.0})
+assert "不会自动处置" in blk and "受保护程序名" in blk,blk
+# 普通容器进程不应标记受保护
+e2=dict(e,comm="node",cmd="node dist/server.js",exe="/usr/local/bin/node",
+        container="myapp",image="node:20")
+m.DOCKER_MAP["dddd"]={"name":"myapp","image":"node:20"}
+assert m.why_protected(e2)=="",m.why_protected(e2)
+
 print("all tests passed")

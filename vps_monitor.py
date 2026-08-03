@@ -5,7 +5,7 @@ from collections import deque
 from datetime import datetime
 from pathlib import Path
 
-VERSION="2.9.0"
+VERSION="2.10.0"
 def env(name,default,cast=str):
  try:return cast(os.getenv(name,str(default)))
  except:return default
@@ -312,7 +312,34 @@ def offender_block(s):
  if c["name"]:rows.append(f"容器：{c['name']}")
  if c["image"]:rows.append(f"镜像：{c['image']}")
  return "\n".join(rows)
-def evidence_block(store):
+def why_protected(e):
+ """说明该进程为何不会被自动处置，便于用户判断是否需要人工介入。"""
+ p={"pid":e["pid"],"comm":e.get("comm",""),"cmd":e.get("cmd",""),"exe":e.get("exe",""),"cgroup":e.get("cgroup","")}
+ if e["pid"] in (0,1,SELF):return "系统关键进程"
+ name=e.get("comm","");cmd=(e.get("cmd","") or "").lower()
+ hit=[k for k in PROTECTED_CMD if k in cmd]
+ if hit:return "命令豁免名单：%s"%hit[0].strip()
+ if PROTECTED_CT:
+  cn=(e.get("container","") or "").lower();im=(e.get("image","") or "").lower()
+  if cn and cn in PROTECTED_CT:return "容器豁免名单：%s"%e["container"]
+  if im and any(i in im for i in PROTECTED_CT):return "镜像豁免名单：%s"%e["image"]
+ exe=os.path.basename(e.get("exe","") or "").strip()
+ if name in PROTECTED or exe in PROTECTED:return "受保护程序名：%s"%(name or exe)
+ if any(name.startswith(x) for x in ("kworker","migration","watchdog","rcu_","ksoftirqd")):return "内核线程"
+ return "" if not protected(p) else "保护规则命中"
+def advise(e,s):
+ """给出可执行建议，避免告警只报数字、无法行动。"""
+ tips=[]
+ ct=e.get("container","")
+ if ct:
+  if e["cpu_pct"]>=70:tips.append(f"限制 CPU：sudo docker update --cpus 1 {ct}")
+  if e["rss_pct"]>=30:tips.append(f"限制内存：sudo docker update --memory 512m --memory-swap 512m {ct}")
+  if not tips:tips.append(f"查看日志：sudo docker logs --tail 100 {ct}")
+ else:
+  tips.append("非容器进程，请人工确认用途后再处理")
+ if s.get("cpu",0)>=95:tips.append("构建期可先让路：sudo vps-build-mode enter")
+ return tips
+def evidence_block(store,s=None):
  """优先用最早抓到的身份信息，短命进程退出后仍可展示。"""
  if not store:return ""
  e=max(store.values(),key=lambda x:max(x["cpu_pct"],x["rss_pct"],x["read_Bps"]/1048576,x["write_Bps"]/1048576))
@@ -323,10 +350,14 @@ def evidence_block(store):
  if e["container"]:rows.append(f"容器：{e['container']}")
  if e["image"]:rows.append(f"镜像：{e['image']}")
  rows.append(f"首次观测：{datetime.fromtimestamp(e['first_seen']).astimezone().strftime('%H:%M:%S')}")
+ wp=why_protected(e)
+ if wp:rows.append(f"⚠️ 不会自动处置（{wp}），需人工判断")
+ if s is not None:
+  for t in advise(e,s):rows.append(f"建议：{t}")
  return "\n".join(rows)
 def send_alert(rs,path,s,evidence=None):
  head=f"🚨 {HOST}\n"+"\n".join(rs)+f"\nCPU {s['cpu']:.1f}%｜内存 {s['mem']:.1f}%｜Swap {s['swap']:.1f}%"
- blk=evidence_block(evidence or {}) or offender_block(s)
+ blk=evidence_block(evidence or {},s) or offender_block(s)
  caption=head+("\n\n主要来源\n"+blk if blk else "")+"\n\n完整取证见附件"
  f=common_fields();f["caption"]=caption[:1024];ok,why=telegram("sendDocument",f,path)
  if not ok:

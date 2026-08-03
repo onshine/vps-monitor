@@ -1,0 +1,77 @@
+#!/bin/sh
+# vps-build-mode: 构建期资源倾斜。临时压低指定容器的 CPU/内存配额，
+# 把资源让给前端构建；构建结束后一键恢复。全程可逆，不杀进程、不丢数据。
+set -eu
+STATE=/var/lib/vps-monitor/build-mode.state
+if [ -t 1 ];then G='\033[1;32m';Y='\033[1;33m';R='\033[1;31m';N='\033[0m';else G=;Y=;R=;N=;fi
+say(){ printf '%b%s%b\n' "$1" "$2" "$N";}
+need_docker(){ command -v docker >/dev/null 2>&1||{ say "$R" '未检测到 docker。';exit 1;}; }
+# 默认在构建期让路的容器（通常是可容忍变慢的后台服务）
+DEFAULT_TARGETS='alist-tvbox xiaoya-tvbox betterforward homedir'
+# 让路时每个容器的 CPU 上限（核）与内存上限
+LIMIT_CPUS="${BUILD_MODE_CPUS:-0.3}"
+LIMIT_MEM="${BUILD_MODE_MEM:-256m}"
+
+running(){ docker ps --format '{{.Names}}' 2>/dev/null; }
+targets(){
+ # 用户可用 BUILD_MODE_TARGETS 覆盖；否则取默认清单里实际在运行的
+ if [ -n "${BUILD_MODE_TARGETS:-}" ];then echo "$BUILD_MODE_TARGETS";return;fi
+ for c in $DEFAULT_TARGETS;do running|grep -qx "$c"&&printf '%s ' "$c";done;echo
+}
+
+enter(){
+ need_docker
+ [ "$(id -u)" = 0 ]||{ say "$R" '请用 sudo。';exit 1;}
+ if [ -f "$STATE" ];then say "$Y" '已处于构建让路模式。如需重置请先 exit。';exit 0;fi
+ tl=$(targets)
+ [ -n "$tl" ]||{ say "$Y" '没有可让路的目标容器在运行。';exit 0;}
+ : >"$STATE"
+ say "$G" "进入构建让路模式，CPU 上限 ${LIMIT_CPUS} 核 / 内存 ${LIMIT_MEM}："
+ for c in $tl;do
+  oc=$(docker inspect "$c" --format '{{.HostConfig.NanoCpus}}' 2>/dev/null||echo 0)
+  om=$(docker inspect "$c" --format '{{.HostConfig.Memory}}' 2>/dev/null||echo 0)
+  printf '%s\t%s\t%s\n' "$c" "$oc" "$om" >>"$STATE"
+  if docker update --cpus "$LIMIT_CPUS" --memory "$LIMIT_MEM" --memory-swap "$LIMIT_MEM" "$c" >/dev/null 2>&1;then
+   say "$G" "  ✓ $c 已限速"
+  elif docker update --cpus "$LIMIT_CPUS" "$c" >/dev/null 2>&1;then
+   say "$G" "  ✓ $c 已限 CPU（内存限制跳过）"
+  else
+   say "$R" "  ✗ $c 限速失败"
+  fi
+ done
+ say "$Y" '现在可以开始构建。完成后执行：sudo vps-build-mode exit'
+}
+
+leave(){
+ need_docker
+ [ "$(id -u)" = 0 ]||{ say "$R" '请用 sudo。';exit 1;}
+ [ -f "$STATE" ]||{ say "$Y" '当前不在构建让路模式。';exit 0;}
+ say "$G" '退出构建让路模式，恢复原配额：'
+ while IFS="$(printf '\t')" read -r c oc om;do
+  [ -n "$c" ]||continue
+  cpuarg="--cpus 0";[ "${oc:-0}" != 0 ]&&cpuarg="--cpus $(awk "BEGIN{printf \"%.3f\",$oc/1000000000}")"
+  memarg="--memory 0 --memory-swap 0";[ "${om:-0}" != 0 ]&&memarg="--memory $om --memory-swap $om"
+  # shellcheck disable=SC2086
+  if docker update $cpuarg $memarg "$c" >/dev/null 2>&1;then say "$G" "  ✓ $c 已恢复";else say "$R" "  ✗ $c 恢复失败，请手动检查";fi
+ done <"$STATE"
+ rm -f "$STATE"
+ say "$G" '已恢复正常。'
+}
+
+status(){
+ if [ -f "$STATE" ];then
+  say "$Y" '状态：构建让路模式（部分容器被临时限速）'
+  say "$G" '受影响容器：'
+  while IFS="$(printf '\t')" read -r c _ _;do [ -n "$c" ]&&echo "  $c";done <"$STATE"
+  say "$G" '恢复：sudo vps-build-mode exit'
+ else
+  say "$G" '状态：正常（无让路）'
+ fi
+}
+
+case "${1:-status}" in
+ enter|start|on) enter;;
+ exit|stop|off) leave;;
+ status) status;;
+ *) echo '用法：vps-build-mode {enter|exit|status}';echo '  enter  构建前执行，临时限制后台容器的 CPU/内存';echo '  exit   构建后执行，恢复所有容器原配额';echo '  status 查看当前状态';exit 1;;
+esac
