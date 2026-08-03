@@ -1,0 +1,27 @@
+[Unit]
+Description=Apply VPS Monitor build-mode request
+Documentation=https://github.com/onshine/vps-monitor
+After=docker.service
+
+[Service]
+Type=oneshot
+# 独立于监控进程：监控自身保持严格沙箱，无法操作 docker/cgroup；
+# 此服务职责单一，只读取请求文件并执行 enter/exit。
+ExecStart=/usr/local/bin/vps-build-mode apply-request
+TimeoutStartSec=120
+Nice=5
+
+# 仍然限制：只允许写自己的状态目录
+NoNewPrivileges=yes
+ProtectHome=read-only
+ProtectSystem=strict
+ReadWritePaths=/var/lib/vps-monitor
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+RestrictRealtime=yes
+
+StandardOutput=append:/var/lib/vps-monitor/runtime.log
+StandardError=append:/var/lib/vps-monitor/runtime.log
+SyslogIdentifier=vps-build-mode

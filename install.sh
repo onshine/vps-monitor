@@ -24,9 +24,11 @@ install -m 0644 "$ROOT/vps-monitor.service" /etc/systemd/system/vps-monitor.serv
 install -m 0755 "$ROOT/vps-monitorctl" /usr/local/bin/vps-monitorctl
 install -m 0755 "$ROOT/menu.sh" /usr/local/bin/vps
 install -m 0755 "$ROOT/vps-build-mode" /usr/local/bin/vps-build-mode
+install -m 0644 "$ROOT/vps-build-mode.path" /etc/systemd/system/vps-build-mode.path
+install -m 0644 "$ROOT/vps-build-mode.service" /etc/systemd/system/vps-build-mode.service
 if [ ! -f /etc/vps-monitor.env ];then install -m 0600 "$ROOT/vps-monitor.env.example" /etc/vps-monitor.env;sed -i "s/^FORENSICS_MODE=.*/FORENSICS_MODE=$MODE/;s/^FORENSICS_CONSENT=.*/FORENSICS_CONSENT=$CONSENT/" /etc/vps-monitor.env;fi
 chown -R root:root /opt/vps-monitor /var/lib/vps-monitor /etc/vps-monitor.env;chmod 0600 /etc/vps-monitor.env
-systemctl daemon-reload;systemctl enable vps-monitor.service
+systemctl daemon-reload;systemctl enable vps-monitor.service;systemctl enable --now vps-build-mode.path >/dev/null 2>&1||true
 if [ -x /usr/local/bin/vps-monitorctl ];then
  /usr/local/bin/vps-monitorctl repair >/dev/null 2>&1||true
  /usr/local/bin/vps-monitorctl migrate 2>/dev/null||true

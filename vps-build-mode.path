@@ -1,0 +1,10 @@
+[Unit]
+Description=Watch for VPS Monitor build-mode requests
+Documentation=https://github.com/onshine/vps-monitor
+
+[Path]
+PathChanged=/var/lib/vps-monitor/build-mode.request
+Unit=vps-build-mode.service
+
+[Install]
+WantedBy=multi-user.target

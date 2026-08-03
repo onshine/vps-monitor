@@ -5,7 +5,7 @@ from collections import deque
 from datetime import datetime
 from pathlib import Path
 
-VERSION="2.11.1"
+VERSION="2.12.0"
 def env(name,default,cast=str):
  try:return cast(os.getenv(name,str(default)))
  except:return default
@@ -155,13 +155,14 @@ def detect_build(s):
   for pat in BUILD_PATTERNS:
    if pat in cmd:return {"pid":pid,"cmd":cmd[:200],"cpu_pct":r["cpu_pct"],"pattern":pat}
  return None
+BUILD_REQ=DATA/"build-mode.request"
 def build_mode_cmd(action):
- """调用外部 vps-build-mode，失败不影响监控主流程。"""
- exe=shutil.which("vps-build-mode") or "/usr/local/bin/vps-build-mode"
- if not os.path.exists(exe):return False,"vps-build-mode 未安装"
+ """写请求文件，由独立的 vps-build-mode.path 服务执行。
+ 监控自身受 ProtectSystem=strict 与 ProtectControlGroups 约束，
+ 无法直接操作 docker/cgroup；解耦后无需放松监控沙箱。"""
  try:
-  p=subprocess.run([exe,action],capture_output=True,text=True,timeout=60)
-  return p.returncode==0,(p.stdout or p.stderr or "").strip()[:300]
+  BUILD_REQ.write_text(action+"\n")
+  return True,f"已提交请求：{action}"
  except Exception as e:return False,str(e)[:200]
 def human(n):
  for u in ("B","KiB","MiB","GiB","TiB"):

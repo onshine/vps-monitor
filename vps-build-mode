@@ -103,11 +103,23 @@ unpin_container(){
   say "$G" "已取消 $cn 的常驻限额"
  else say "$R" "操作失败：$cn";return 1;fi
 }
+apply_request(){
+ req=/var/lib/vps-monitor/build-mode.request
+ [ -f "$req" ]||exit 0
+ action=$(head -1 "$req"|tr -d '\r\n ')
+ rm -f "$req"
+ case "$action" in
+  enter) enter;;
+  exit) leave;;
+  *) say "$R" "未知请求：$action";exit 1;;
+ esac
+}
 case "${1:-status}" in
  enter|start|on) enter;;
  exit|stop|off) leave;;
  status) status;;
  pin) need_root;pin_container "${2:-}" "${3:-}" "${4:-}";;
  unpin) need_root;unpin_container "${2:-}";;
+ apply-request) apply_request;;
  *) echo '用法：vps-build-mode {enter|exit|status|pin <容器> <CPU核> <内存>|unpin <容器>}';exit 1;;
 esac
