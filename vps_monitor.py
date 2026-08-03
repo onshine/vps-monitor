@@ -5,7 +5,7 @@ from collections import deque
 from datetime import datetime
 from pathlib import Path
 
-VERSION="2.10.0"
+VERSION="2.11.0"
 def env(name,default,cast=str):
  try:return cast(os.getenv(name,str(default)))
  except:return default
@@ -139,6 +139,30 @@ def container_of(p):
   info=DOCKER_MAP.get(short)
  return {"id":short,"name":(info or {}).get("name",""),"image":(info or {}).get("image","")}
 DOCKER_MAP={}
+AUTO_BUILD_MODE=os.getenv("AUTO_BUILD_MODE","false").lower() in ("1","true","yes")
+BUILD_PATTERNS=[x.strip().lower() for x in os.getenv("BUILD_DETECT_CMDLINE","vite build,npm run build,npm ci,yarn build,pnpm build,webpack,next build,nuxt build").split(",") if x.strip()]
+BUILD_CPU_MIN=max(1,env("BUILD_DETECT_CPU_MIN",40,float))
+BUILD_EXIT_GRACE=max(10,env("BUILD_EXIT_GRACE_SECONDS",60,int))
+def detect_build(s):
+ """识别正在进行的前端/后端构建：命令行匹配且 CPU 占用显著。"""
+ if not s.get("rates"):return None
+ for pid,r in s["rates"].items():
+  if pid==SELF or r["cpu_pct"]<BUILD_CPU_MIN:continue
+  try:
+   cmd=text(f"/proc/{pid}/cmdline",65536).replace("\0"," ").strip().lower()
+  except Exception:continue
+  if not cmd:continue
+  for pat in BUILD_PATTERNS:
+   if pat in cmd:return {"pid":pid,"cmd":cmd[:200],"cpu_pct":r["cpu_pct"],"pattern":pat}
+ return None
+def build_mode_cmd(action):
+ """调用外部 vps-build-mode，失败不影响监控主流程。"""
+ exe=shutil.which("vps-build-mode") or "/usr/local/bin/vps-build-mode"
+ if not os.path.exists(exe):return False,"vps-build-mode 未安装"
+ try:
+  p=subprocess.run([exe,action],capture_output=True,text=True,timeout=60)
+  return p.returncode==0,(p.stdout or p.stderr or "").strip()[:300]
+ except Exception as e:return False,str(e)[:200]
 def human(n):
  for u in ("B","KiB","MiB","GiB","TiB"):
   if abs(n)<1024:return f"{n:.1f}{u}"
@@ -544,7 +568,7 @@ def config_check():
   print("ERROR: "+"; ".join(errors),file=sys.stderr);return 1
  return 0
 def main():
- print(f"VPS Sentinel {VERSION} started host={HOST} pid={SELF} interval={INTERVAL}s",flush=True); cleanup(); pc=cpu_raw();pd=disks_raw();pp=procs_raw() if FULL else {};last=time.monotonic();last_proc=last;last_metric=0;bad=good=0;active=False;last_alert=0;candidate_key=None;candidate_hits=0;pending_report=None;evidence={}
+ print(f"VPS Sentinel {VERSION} started host={HOST} pid={SELF} interval={INTERVAL}s",flush=True); cleanup(); pc=cpu_raw();pd=disks_raw();pp=procs_raw() if FULL else {};last=time.monotonic();last_proc=last;last_metric=0;bad=good=0;active=False;last_alert=0;candidate_key=None;candidate_hits=0;pending_report=None;evidence={};build_active=False;build_gone=0
  while True:
   target=last+INTERVAL;time.sleep(max(0,target-time.monotonic()));now=time.monotonic();dt=max(.1,now-last);scan=FULL and now-last_proc>=PROC_INTERVAL*.95
   try:
@@ -553,6 +577,24 @@ def main():
    if scan:pp=np;last_proc=now
    rs=reasons(s,now);pending_report=None
    merge_evidence(evidence,capture_evidence(s,time.time()),time.time())
+   if AUTO_BUILD_MODE:
+    b=detect_build(s)
+    if b and not build_active:
+     ok,out=build_mode_cmd("enter")
+     if ok:
+      build_active=True;build_gone=0
+      print(f"BUILD_MODE enter pattern={b['pattern']} pid={b['pid']} cpu={b['cpu_pct']:.1f}%",flush=True)
+      send_message(f"🔧 <b>检测到构建，已自动让路</b>\n主机：<code>{html.escape(HOST)}</code>\n匹配：<code>{html.escape(b['pattern'])}</code>\nPID：{b['pid']}｜CPU {b['cpu_pct']:.1f}%\n已临时限速其他容器，构建结束后自动恢复。")
+     else:print(f"BUILD_MODE enter failed: {out}",flush=True)
+    elif build_active:
+     if b:build_gone=0
+     else:
+      build_gone+=1
+      if build_gone*INTERVAL>=BUILD_EXIT_GRACE:
+       ok,out=build_mode_cmd("exit")
+       build_active=False;build_gone=0
+       print(f"BUILD_MODE exit ok={ok} {out}",flush=True)
+       if ok:send_message(f"✅ <b>构建结束，已恢复原配额</b>\n主机：<code>{html.escape(HOST)}</code>")
    if METRICS_INTERVAL and now-last_metric>=METRICS_INTERVAL:metric(s);last_metric=now
    p,kind=action_candidate(s,rs)
    if p:

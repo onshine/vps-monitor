@@ -69,9 +69,35 @@ status(){
  fi
 }
 
+need_root(){ [ "$(id -u)" = 0 ]||{ say "$R" '需要 root：请加 sudo。';exit 1;}; }
+pin_container(){
+ need_docker
+ cn=$1;cpus=$2;mem=$3
+ if [ -z "$cn" ]||[ -z "$cpus" ]||[ -z "$mem" ];then say "$R" '用法：vps-build-mode pin <容器> <CPU核> <内存>';say "$Y" '例：sudo vps-build-mode pin alist-tvbox 0.5 512m';return 1;fi
+ if ! docker inspect "$cn" >/dev/null 2>&1;then say "$R" "容器不存在：$cn";return 1;fi
+ cur=$(docker stats --no-stream --format '{{.MemUsage}}' "$cn" 2>/dev/null|cut -d/ -f1|tr -d ' ')
+ say "$Y" "当前内存用量：${cur:-未知}。若设定值低于实际用量，容器会被内核 OOM 杀掉。"
+ if docker update --cpus "$cpus" --memory "$mem" --memory-swap "$mem" "$cn" >/dev/null 2>&1;then
+  say "$G" "已为 $cn 设置常驻限额：${cpus} 核 / ${mem}"
+  say "$Y" 'docker compose 重建会丢失，需写入 compose 文件：'
+  printf '  cpus: %s\n  mem_limit: %s\n' "$cpus" "$mem"
+ else
+  say "$R" "设置失败：$cn（内存值可能低于容器实际需求）";return 1
+ fi
+}
+unpin_container(){
+ need_docker
+ cn=$1
+ if [ -z "$cn" ];then say "$R" '用法：vps-build-mode unpin <容器>';return 1;fi
+ if docker update --cpus 0 --memory 0 --memory-swap 0 "$cn" >/dev/null 2>&1;then
+  say "$G" "已取消 $cn 的常驻限额"
+ else say "$R" "操作失败：$cn";return 1;fi
+}
 case "${1:-status}" in
  enter|start|on) enter;;
  exit|stop|off) leave;;
  status) status;;
- *) echo '用法：vps-build-mode {enter|exit|status}';echo '  enter  构建前执行，临时限制后台容器的 CPU/内存';echo '  exit   构建后执行，恢复所有容器原配额';echo '  status 查看当前状态';exit 1;;
+ pin) need_root;pin_container "${2:-}" "${3:-}" "${4:-}";;
+ unpin) need_root;unpin_container "${2:-}";;
+ *) echo '用法：vps-build-mode {enter|exit|status|pin <容器> <CPU核> <内存>|unpin <容器>}';exit 1;;
 esac

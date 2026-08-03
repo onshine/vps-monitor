@@ -371,6 +371,47 @@ sudo vps-build-mode status
 
 也可以在菜单里操作：`vps` → `6`。
 
+### 自动检测构建（免手动）
+
+不想每次手动执行，可以开启自动模式：
+
+```bash
+sudo vps-monitorctl set AUTO_BUILD_MODE true
+```
+
+开启后监控会自行判断：命令行匹配构建关键字**且** CPU 超过 40% 时，自动进入让路模式并发 TG 通知；构建进程消失满 60 秒后自动恢复原配额。
+
+相关配置：
+
+```ini
+AUTO_BUILD_MODE="true"
+BUILD_DETECT_CMDLINE="vite build,npm run build,npm ci,yarn build,pnpm build,webpack,next build,nuxt build"
+BUILD_DETECT_CPU_MIN="40"
+BUILD_EXIT_GRACE_SECONDS="60"
+```
+
+60 秒宽限是为了避免多阶段构建（安装依赖→编译→打包）之间的短暂空隙导致反复切换。
+
+### 常驻限额（一直限制某个容器）
+
+如果希望某个服务长期保持低配额，而不只是构建期：
+
+```bash
+sudo vps-build-mode pin alist-tvbox 0.5 512m
+```
+
+取消：
+
+```bash
+sudo vps-build-mode unpin alist-tvbox
+```
+
+> ⚠️ **内存值不能低于容器实际用量**，否则容器一启动就会被内核 OOM 杀掉。设置前先看实际占用：
+> ```bash
+> docker stats --no-stream alist-tvbox
+> ```
+> 例如 alist-tvbox 是 Java 应用，JVM 参数常见 `-Xmx512M`，常态占用 280–300MiB，那么内存至少给 `512m`，给 `256m` 会导致容器无法启动。
+
 自定义让路的容器和限额，用环境变量：
 
 ```bash
